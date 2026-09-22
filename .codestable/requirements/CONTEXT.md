@@ -10,6 +10,8 @@ scope: workspace
 
 - [context:bridge-simulation](contexts/bridge-simulation.md)：桥接方案、H5 请求、Android 回包、自动配对和独立安卓发送。代码位置：`H5-Bridge-DevTools/src/injected`、`H5-Bridge-DevTools/src/content`、`H5-Bridge-DevTools/src/shared`、`H5-Bridge-DevTools/src/panel`；实现包：`package:h5-bridge-devtools`。
 
+- [context:vault-sync](contexts/vault-sync.md)：保险库、配置文件、分片与分片清单、同步头、冲突守卫、破坏性操作保护和恢复点。代码位置：`ProjectNexus/src/core`、`ProjectNexus/src/infrastructure`、`ProjectNexus/src/presentation`；实现包：`package:project-nexus`。
+
 包是实现边界，不自动成为领域边界；当前没有跨包共享的领域上下文，也没有 `shared/` 页面。
 
 ## 作用域规则
