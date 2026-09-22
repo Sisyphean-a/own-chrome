@@ -1,0 +1,242 @@
+import type { BridgePanelSnapshot } from "../shared/bridgeTypes";
+import { syncNavigationSnapshotState } from "./navigationState";
+import type { AppViewState, ResponseDraft, SenderDraft } from "./types";
+import { createResponseDraft, createSenderDraft } from "./utils";
+
+export function syncSnapshotState(
+  current: AppViewState,
+  snapshot: BridgePanelSnapshot,
+): AppViewState {
+  const baseCurrent = createSnapshotBaseState(current, snapshot);
+  const senderState = syncSenderDraft(baseCurrent, snapshot);
+  const responseState = syncResponseDraft(baseCurrent, snapshot);
+  const toast = buildRemoteUpdateToast(senderState, responseState);
+
+  const next = {
+    ...baseCurrent,
+    snapshot,
+    selectedSenderId: senderState.selectedSenderId,
+    senderDraft: senderState.senderDraft,
+    selectedResponse: responseState.selectedResponse,
+    responseDraft: responseState.responseDraft,
+    toast: toast ?? baseCurrent.toast,
+  };
+  return syncNavigationSnapshotState(baseCurrent, next);
+}
+
+function syncSenderDraft(
+  current: AppViewState,
+  snapshot: BridgePanelSnapshot,
+): Pick<AppViewState, "selectedSenderId" | "senderDraft"> & {
+  preservedRemoteUpdate: boolean;
+} {
+  const selectedSenderId = current.selectedSenderId;
+  const draft = current.senderDraft;
+  const sender = selectedSenderId
+    ? snapshot.senders.find((item) => item.id === selectedSenderId)
+    : null;
+  if (!draft) {
+    return sender
+      ? {
+          selectedSenderId: sender.id,
+          senderDraft: createSenderDraft(sender),
+          preservedRemoteUpdate: false,
+        }
+      : { selectedSenderId: null, senderDraft: null, preservedRemoteUpdate: false };
+  }
+  if (!sender) {
+    return {
+      selectedSenderId: selectedSenderId ?? draft.id,
+      senderDraft: draft,
+      preservedRemoteUpdate: false,
+    };
+  }
+
+  const freshDraft = createSenderDraft(sender);
+  const previousSender = current.snapshot?.senders.find((item) => item.id === sender.id);
+  const previousDraft = previousSender ? createSenderDraft(previousSender) : null;
+  const hasLocalEdits = previousDraft ? isSenderDraftDirty(draft, previousDraft) : true;
+  return {
+    selectedSenderId: sender.id,
+    senderDraft: hasLocalEdits ? draft : freshDraft,
+    preservedRemoteUpdate:
+      hasLocalEdits && didSenderChange(previousDraft, freshDraft),
+  };
+}
+
+function syncResponseDraft(
+  current: AppViewState,
+  snapshot: BridgePanelSnapshot,
+): Pick<AppViewState, "selectedResponse" | "responseDraft"> & {
+  preservedRemoteUpdate: boolean;
+} {
+  const draft = current.responseDraft;
+  const ref = current.selectedResponse;
+  if (!ref) {
+    return { selectedResponse: null, responseDraft: null, preservedRemoteUpdate: false };
+  }
+
+  const sender = snapshot.senders.find((item) => item.id === ref.senderId);
+  const response = sender?.responses.find((item) => item.id === ref.responseId);
+  if (!draft) {
+    return sender && response
+      ? {
+          selectedResponse: ref,
+          responseDraft: createResponseDraft(sender.id, response),
+          preservedRemoteUpdate: false,
+        }
+      : { selectedResponse: null, responseDraft: null, preservedRemoteUpdate: false };
+  }
+  if (!sender || !response) {
+    return { selectedResponse: ref, responseDraft: draft, preservedRemoteUpdate: false };
+  }
+
+  const freshDraft = createResponseDraft(sender.id, response);
+  const previousSender = current.snapshot?.senders.find((item) => item.id === ref.senderId);
+  const previousResponse = previousSender?.responses.find((item) => item.id === ref.responseId);
+  const previousDraft = previousResponse ? createResponseDraft(ref.senderId, previousResponse) : null;
+  const hasLocalEdits = previousDraft ? isResponseDraftDirty(draft, previousDraft) : true;
+  return {
+    selectedResponse: ref,
+    responseDraft: hasLocalEdits ? draft : freshDraft,
+    preservedRemoteUpdate:
+      hasLocalEdits && didResponseChange(previousDraft, freshDraft),
+  };
+}
+
+function isSenderDraftDirty(draft: SenderDraft, fresh: SenderDraft): boolean {
+  return draft.name !== fresh.name || draft.matchEvent !== fresh.matchEvent;
+}
+
+function isResponseDraftDirty(draft: ResponseDraft, fresh: ResponseDraft): boolean {
+  return (
+    draft.name !== fresh.name ||
+    draft.delayMs !== fresh.delayMs ||
+    draft.mode !== fresh.mode ||
+    draft.eventName !== fresh.eventName ||
+    draft.detailText !== fresh.detailText
+  );
+}
+
+function buildRemoteUpdateToast(
+  senderState: { preservedRemoteUpdate: boolean },
+  responseState: { preservedRemoteUpdate: boolean },
+): AppViewState["toast"] | null {
+  if (responseState.preservedRemoteUpdate) {
+    return {
+      level: "info",
+      message: "已收到远端响应更新，当前保留本地未保存草稿。",
+    };
+  }
+  if (senderState.preservedRemoteUpdate) {
+    return {
+      level: "info",
+      message: "已收到远端发送更新，当前保留本地未保存草稿。",
+    };
+  }
+  return null;
+}
+
+function createSnapshotBaseState(
+  current: AppViewState,
+  snapshot: BridgePanelSnapshot,
+): AppViewState {
+  const profileChanged =
+    current.snapshot !== null &&
+    current.snapshot.activeProfileId !== snapshot.activeProfileId;
+  if (!profileChanged) {
+    return current;
+  }
+
+  return {
+    ...current,
+    selectedSenderId: null,
+    senderDraft: null,
+    selectedResponse: null,
+    responseDraft: null,
+    activeLogEvent: null,
+  };
+}
+
+function didSenderChange(previous: SenderDraft | null, next: SenderDraft): boolean {
+  if (!previous) {
+    return true;
+  }
+  return isSenderDraftDirty(previous, next);
+}
+
+function didResponseChange(previous: ResponseDraft | null, next: ResponseDraft): boolean {
+  if (!previous) {
+    return true;
+  }
+  return isResponseDraftDirty(previous, next);
+}
+
+export function hasActiveExtensionRuntime(
+  runtime: Partial<Pick<typeof chrome.runtime, "sendMessage" | "id">> | undefined,
+): runtime is Pick<typeof chrome.runtime, "sendMessage" | "id"> {
+  return typeof runtime?.sendMessage === "function" && typeof runtime.id === "string" && runtime.id.length > 0;
+}
+
+export function isExtensionContextInvalidatedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("Extension context invalidated")
+  );
+}
+
+/**
+ * 判断 url 是否命中任一 Chrome match pattern（仅覆盖本扩展用到的
+ * scheme://host[:port]/* 形式与 <all_urls>）。
+ */
+export function matchesContentScriptPattern(url: string, patterns: string[]): boolean {
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  return patterns.some((pattern) => matchPattern(parsed, pattern));
+}
+
+function matchPattern(url: URL, pattern: string): boolean {
+  if (pattern === "<all_urls>") {
+    return true;
+  }
+
+  const schemeEnd = pattern.indexOf("://");
+  if (schemeEnd < 0) {
+    return false;
+  }
+  const scheme = pattern.slice(0, schemeEnd);
+  const rest = pattern.slice(schemeEnd + 3);
+  const pathStart = rest.indexOf("/");
+  const hostPort = pathStart >= 0 ? rest.slice(0, pathStart) : rest;
+
+  if (scheme !== "*" && url.protocol !== `${scheme}:`) {
+    return false;
+  }
+
+  const colon = hostPort.lastIndexOf(":");
+  const host = colon >= 0 ? hostPort.slice(0, colon) : hostPort;
+  const port = colon >= 0 ? hostPort.slice(colon + 1) : "*";
+  if (!hostMatches(host, url.hostname)) {
+    return false;
+  }
+  if (port !== "*" && port !== url.port) {
+    return false;
+  }
+  return true;
+}
+
+function hostMatches(patternHost: string, actualHost: string): boolean {
+  if (patternHost === "*") {
+    return true;
+  }
+  if (patternHost.startsWith("*.")) {
+    const suffix = patternHost.slice(1);
+    return actualHost === patternHost.slice(2) || actualHost.endsWith(suffix);
+  }
+  return patternHost === actualHost;
+}

@@ -1,0 +1,141 @@
+import { describe, expect, it } from "vitest";
+import {
+  MAX_RESPONSE_DELAY_MS,
+  findSenderByEvent,
+  findMatchingSender,
+  findEquivalentResponseIndex,
+  mergeImportedSenders,
+  normalizeSenders,
+  validateResponse,
+} from "./rules";
+import { createResponse, createSender } from "../test/factories";
+import { createStandaloneSender } from "./standaloneSender";
+
+describe("shared rules behavior", () => {
+  it("findEquivalentResponseIndex 会在 id 不同的情况下按响应签名匹配", () => {
+    const existing = createResponse("resp-a", {
+      name: "登录成功",
+      delayMs: 80,
+      eventName: "login",
+      detail: { ok: true },
+    });
+    const target = createResponse("resp-b", {
+      name: "登录成功",
+      delayMs: 80,
+      eventName: "login",
+      detail: { ok: true },
+    });
+
+    expect(findEquivalentResponseIndex([existing], target)).toBe(0);
+  });
+
+  it("normalizeSenders 会按 matchEvent 合并 sender，并优先保留已有的活跃响应", () => {
+    const first = createResponse("resp-1", { eventName: "login", detail: { step: 1 } });
+    const second = createResponse("resp-2", { eventName: "login", detail: { step: 2 } });
+    const merged = normalizeSenders([
+      createSender("sender-a", {
+        name: "登录 / 旧",
+        matchEvent: "login",
+        responses: [first],
+        activeResponseId: null,
+        meta: { createdAt: 10, updatedAt: 20, hitCount: 2 },
+      }),
+      createSender("sender-b", {
+        name: "登录 / 新",
+        matchEvent: "login",
+        responses: [second],
+        activeResponseId: second.id,
+        meta: { createdAt: 5, updatedAt: 30, hitCount: 3 },
+      }),
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      name: "登录",
+      matchEvent: "login",
+      activeResponseId: second.id,
+      meta: { createdAt: 5, updatedAt: 30, hitCount: 5 },
+    });
+    expect(merged[0].responses.map((response) => response.id)).toEqual([first.id, second.id]);
+  });
+
+  it("mergeImportedSenders 在 appendUnpaired 下会清空导入 sender 的活跃响应并生成新 id", () => {
+    const imported = createSender("sender-imported", {
+      matchEvent: "camera",
+    });
+
+    const merged = mergeImportedSenders([], [imported], "appendUnpaired");
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].activeResponseId).toBeNull();
+    expect(merged[0].lastActiveResponseId).toBe(merged[0].responses[0]?.id ?? null);
+    expect(merged[0].matchEvent).toBe("camera");
+    expect(merged[0].id).not.toBe(imported.id);
+    expect(merged[0].responses[0]?.id).not.toBe(imported.responses[0]?.id);
+  });
+
+  it("normalizeSenders 会保留未配对 sender 的上次活跃响应", () => {
+    const response = createResponse("resp-1");
+    const normalized = normalizeSenders([
+      createSender("sender-a", {
+        responses: [response],
+        activeResponseId: null,
+        lastActiveResponseId: response.id,
+      }),
+    ]);
+
+    expect(normalized[0]).toMatchObject({
+      activeResponseId: null,
+      lastActiveResponseId: response.id,
+    });
+  });
+
+  it("findMatchingSender 会跳过未关联活跃响应的 sender", () => {
+    const disabledByUnpair = createSender("sender-a", {
+      matchEvent: "login",
+      activeResponseId: null,
+    });
+    const active = createSender("sender-b", {
+      matchEvent: "login",
+    });
+
+    expect(findMatchingSender([disabledByUnpair], "login")).toBeUndefined();
+    expect(findMatchingSender([disabledByUnpair, active], "login")?.id).toBe("sender-b");
+  });
+
+  it("findMatchingSender 会跳过独立安卓发送容器", () => {
+    const standalone = createStandaloneSender([createResponse("resp-standalone")]);
+    const active = createSender("sender-b", {
+      matchEvent: "login",
+    });
+
+    standalone.matchEvent = "login";
+    standalone.activeResponseId = standalone.responses[0]?.id ?? null;
+
+    expect(findMatchingSender([standalone, active], "login")?.id).toBe("sender-b");
+  });
+
+  it("findSenderByEvent 只按 matchEvent 匹配，不要求活跃响应", () => {
+    const unpaired = createSender("sender-a", {
+      matchEvent: "login",
+      activeResponseId: null,
+    });
+    const standalone = createStandaloneSender([createResponse("resp-standalone")]);
+    standalone.matchEvent = "login";
+
+    expect(findSenderByEvent([unpaired, standalone], "login")?.id).toBe("sender-a");
+    expect(findSenderByEvent([], "login")).toBeUndefined();
+  });
+
+  it("validateResponse 拒绝超过 24 小时的延迟", () => {
+    expect(
+      validateResponse(createResponse("resp-1", { delayMs: MAX_RESPONSE_DELAY_MS })),
+    ).toEqual([]);
+    expect(
+      validateResponse(createResponse("resp-2", { delayMs: MAX_RESPONSE_DELAY_MS + 1 })).length,
+    ).toBeGreaterThan(0);
+    expect(
+      validateResponse(createResponse("resp-3", { delayMs: Number.POSITIVE_INFINITY })).length,
+    ).toBeGreaterThan(0);
+  });
+});

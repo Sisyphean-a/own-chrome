@@ -1,0 +1,280 @@
+import type { BridgeLogItem, BridgeLogType, BridgePanelSnapshot } from "../shared/bridgeTypes";
+import {
+  BRIDGE_PROFILES,
+  DEFAULT_BRIDGE_PROFILE_ID,
+  getBridgeProfile,
+  type BridgeProfileId,
+} from "../shared/bridgeProfiles";
+import { cloneJson } from "../shared/json";
+import type { PanelCommand } from "../shared/messageTypes";
+import { createBlankSender, getPresetSenders } from "../shared/presets";
+import {
+  duplicateSender,
+  mergeImportedSenders,
+  normalizeResponseSelection,
+  selectSenderResponse,
+} from "../shared/rules";
+import type { OriginBridgeSettings } from "../shared/ruleTypes";
+import type { BridgeResponseOption, BridgeSender } from "../shared/senderTypes";
+
+const previewSettings: OriginBridgeSettings = {
+  autoMock: true,
+  preserveLogs: true,
+  maxLogCount: 200,
+  overrideExistingBridge: true,
+};
+
+export function createPreviewSnapshot(
+  profileId: BridgeProfileId = DEFAULT_BRIDGE_PROFILE_ID,
+): BridgePanelSnapshot {
+  const senders = getPresetSenders(profileId).slice(0, 3);
+  const extraSender = createBlankSender();
+  extraSender.name = "获取用户信息";
+  extraSender.matchEvent = "getUserInfo";
+  extraSender.responses = [];
+  extraSender.activeResponseId = null;
+  extraSender.lastActiveResponseId = null;
+
+  return {
+    origin: "https://preview.local",
+    href: "https://preview.local/devtools",
+    globalEnabled: true,
+    activeProfileId: profileId,
+    activeProfile: getBridgeProfile(profileId),
+    profiles: BRIDGE_PROFILES.map((profile) => ({ ...profile })),
+    senders: [...senders, extraSender],
+    logs: createPreviewLogs(profileId),
+    settings: { ...previewSettings },
+  };
+}
+
+export function applyPreviewCommand(
+  snapshot: BridgePanelSnapshot,
+  command: PanelCommand,
+  dispatchEvent?: (eventName: string, detail: unknown) => void,
+): BridgePanelSnapshot {
+  switch (command.type) {
+    case "REQUEST_SNAPSHOT":
+      return snapshot;
+    case "SET_ACTIVE_PROFILE":
+      return switchPreviewProfile(snapshot, command.profileId);
+    case "UPSERT_SENDER":
+      return { ...snapshot, senders: upsertSender(snapshot.senders, command.sender) };
+    case "DELETE_SENDER":
+      return {
+        ...snapshot,
+        senders: snapshot.senders.filter((sender) => sender.id !== command.senderId),
+      };
+    case "DUPLICATE_SENDER":
+      return { ...snapshot, senders: appendDuplicate(snapshot.senders, command.senderId) };
+    case "SET_ACTIVE_RESPONSE":
+      return {
+        ...snapshot,
+        senders: snapshot.senders.map((sender) =>
+          sender.id === command.senderId
+            ? {
+                ...sender,
+                ...selectSenderResponse(sender, command.responseId),
+              }
+            : sender,
+        ),
+      };
+    case "UPSERT_RESPONSE":
+      return {
+        ...snapshot,
+        senders: snapshot.senders.map((sender) =>
+          sender.id === command.senderId
+            ? applyPreviewResponseUpsert(sender, command.response)
+            : sender,
+        ),
+      };
+    case "DELETE_RESPONSE":
+      return {
+        ...snapshot,
+        senders: snapshot.senders.map((sender) => {
+          if (sender.id !== command.senderId) {
+            return sender;
+          }
+          const responses = sender.responses.filter((response) => response.id !== command.responseId);
+          const fallbackResponseId =
+            sender.activeResponseId === command.responseId ||
+            sender.lastActiveResponseId === command.responseId
+              ? (responses[0]?.id ?? null)
+              : null;
+          return {
+            ...sender,
+            responses,
+            ...normalizeResponseSelection(
+              responses,
+              sender.activeResponseId === command.responseId
+                ? fallbackResponseId
+                : sender.activeResponseId,
+              sender.lastActiveResponseId === command.responseId
+                ? null
+                : sender.lastActiveResponseId,
+              fallbackResponseId,
+            ),
+          };
+        }),
+      };
+    case "TRIGGER_RESPONSE":
+      return triggerPreviewResponse(snapshot, command.senderId, command.responseId, dispatchEvent);
+    case "IMPORT_SENDERS":
+      return {
+        ...snapshot,
+        senders: mergeImportedSenders(snapshot.senders, command.senders, command.strategy),
+      };
+    case "IMPORT_RULE_PACKAGE": {
+      const profile = command.rulePackage.profile;
+      return {
+        ...snapshot,
+        activeProfileId: profile.id,
+        activeProfile: { ...profile },
+        profiles: [
+          ...snapshot.profiles.filter((item) => item.id !== profile.id),
+          { ...profile },
+        ],
+        senders: mergeImportedSenders(snapshot.senders, command.rulePackage.senders, command.strategy),
+        settings: { ...snapshot.settings, ...command.rulePackage.settings },
+      };
+    }
+    case "CLEAR_LOGS":
+      return { ...snapshot, logs: [] };
+    case "SET_GLOBAL_ENABLED":
+      return { ...snapshot, globalEnabled: command.enabled };
+    case "UPDATE_SETTINGS":
+      return { ...snapshot, settings: { ...snapshot.settings, ...command.settings } };
+    case "MANUAL_EMIT":
+      return appendEmitLog(snapshot, command.eventName, command.detail);
+    case "REPLAY_LOG_RESPONSE": {
+      const log = snapshot.logs.find((item) => item.id === command.logId);
+      return log?.event ? appendEmitLog(snapshot, log.event, log.response ?? {}) : snapshot;
+    }
+  }
+}
+
+function switchPreviewProfile(
+  snapshot: BridgePanelSnapshot,
+  profileId: BridgeProfileId,
+): BridgePanelSnapshot {
+  const next = createPreviewSnapshot(profileId);
+  return {
+    ...next,
+    globalEnabled: snapshot.globalEnabled,
+    settings: {
+      ...next.settings,
+      ...snapshot.settings,
+    },
+  };
+}
+
+function triggerPreviewResponse(
+  snapshot: BridgePanelSnapshot,
+  senderId: string,
+  responseId: string,
+  dispatchEvent?: (eventName: string, detail: unknown) => void,
+): BridgePanelSnapshot {
+  const sender = snapshot.senders.find((item) => item.id === senderId);
+  const response = sender?.responses.find((item) => item.id === responseId);
+  if (!response) {
+    return snapshot;
+  }
+
+  dispatchEvent?.(response.eventName, response.detail);
+  return appendEmitLog(snapshot, response.eventName, response.detail);
+}
+
+function appendEmitLog(
+  snapshot: BridgePanelSnapshot,
+  eventName: string,
+  detail: unknown,
+): BridgePanelSnapshot {
+  return {
+    ...snapshot,
+    logs: [
+      createLogItem("EMIT", eventName, { response: cloneJson(detail) }),
+      ...snapshot.logs,
+    ].slice(0, snapshot.settings.maxLogCount),
+  };
+}
+
+function upsertSender(senders: BridgeSender[], sender: BridgeSender): BridgeSender[] {
+  const index = senders.findIndex((item) => item.id === sender.id);
+  return index >= 0
+    ? senders.map((item, itemIndex) => (itemIndex === index ? cloneJson(sender) : item))
+    : [...senders, cloneJson(sender)];
+}
+
+function appendDuplicate(senders: BridgeSender[], senderId: string): BridgeSender[] {
+  const sender = senders.find((item) => item.id === senderId);
+  return sender ? [...senders, duplicateSender(sender)] : senders;
+}
+
+function upsertResponse(
+  responses: BridgeResponseOption[],
+  response: BridgeResponseOption,
+): BridgeResponseOption[] {
+  const index = responses.findIndex((item) => item.id === response.id);
+  return index >= 0
+    ? responses.map((item, itemIndex) => (itemIndex === index ? cloneJson(response) : item))
+    : [...responses, cloneJson(response)];
+}
+
+function applyPreviewResponseUpsert(
+  sender: BridgeSender,
+  response: BridgeResponseOption,
+): BridgeSender {
+  const responses = upsertResponse(sender.responses, response);
+  const nextSelection =
+    sender.responses.length === 0
+      ? normalizeResponseSelection(responses, response.id, response.id)
+      : normalizeResponseSelection(
+          responses,
+          sender.activeResponseId,
+          sender.lastActiveResponseId,
+        );
+  return {
+    ...sender,
+    responses,
+    ...nextSelection,
+  };
+}
+
+function createPreviewLogs(profileId: BridgeProfileId): BridgeLogItem[] {
+  const loginEvent = profileId === "pkg03" ? "requestLogin" : "toLogin";
+  const successDetail =
+    profileId === "pkg03"
+      ? { result: true, token: "mock-token-003" }
+      : { success: true, token: "mock-token-001" };
+  return [
+    createLogItem("SEND", loginEvent, {
+      timestamp: Date.now() - 32_000,
+      payload: { event: loginEvent, detail: { mobile: "138****0000" } },
+    }),
+    createLogItem("MOCK", loginEvent, {
+      timestamp: Date.now() - 31_500,
+      response: successDetail,
+    }),
+    createLogItem("WARN", "getUserInfo", {
+      timestamp: Date.now() - 15_000,
+      message: "Sender \"获取用户信息\" has no active response.",
+    }),
+  ];
+}
+
+function createLogItem(
+  type: BridgeLogType,
+  event: string,
+  extra: Partial<BridgeLogItem>,
+): BridgeLogItem {
+  return {
+    id: extra.id ?? `log-${type.toLowerCase()}-${Date.now()}-${Math.random()}`,
+    type,
+    event,
+    timestamp: extra.timestamp ?? Date.now(),
+    payload: extra.payload,
+    response: extra.response,
+    message: extra.message,
+    ruleId: extra.ruleId,
+  };
+}
