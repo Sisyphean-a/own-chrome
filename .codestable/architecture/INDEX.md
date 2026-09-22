@@ -8,6 +8,9 @@
 | `package:h5-bridge-devtools` | [h5-bridge-devtools.md](packages/h5-bridge-devtools.md) | MV3 DevTools 扩展的主世界注入、页面桥接、存储、面板和开发预览 |
 
 | `package:project-nexus` | [project-nexus.md](packages/project-nexus.md) | 保险库配置文件的 Gist 分片同步、端到端加密、历史快照与本地缓存 |
+| `package:pulse-trace` | [pulse-trace.md](packages/pulse-trace.md) | 目标规则匹配、会话与心跳追踪、按日聚合日志与概览 |
+| `package:code-pocket` | [code-pocket.md](packages/code-pocket.md) | 代码片段的本地库、Gist 同步与隔离运行 |
+| `package:json-to-js` | [json-to-js.md](packages/json-to-js.md) | JSON 解析、字段筛选（指定层级/递归深度）与筛选代码生成 |
 
 ## 运行拓扑
 
@@ -31,3 +34,6 @@ own-chrome/
 - 修改仓库组织、根配置或记忆入口：读取 `attention.md`、本页和 `requirements/CONTEXT.md`。
 - 修改 `H5-Bridge-DevTools/`：额外读取 [h5-bridge-devtools.md](packages/h5-bridge-devtools.md) 和 [bridge-simulation.md](../requirements/contexts/bridge-simulation.md)。
 - 修改 `ProjectNexus/`：额外读取 [project-nexus.md](packages/project-nexus.md) 和 [vault-sync.md](../requirements/contexts/vault-sync.md)。
+- 修改 `PulseTrace/`：额外读取 [pulse-trace.md](packages/pulse-trace.md) 和 [activity-tracking.md](../requirements/contexts/activity-tracking.md)。
+- 修改 `CodePocket/`：额外读取 [code-pocket.md](packages/code-pocket.md) 和 [snippet-library.md](../requirements/contexts/snippet-library.md)。
+- 修改 `jsonToJs/`：额外读取 [json-to-js.md](packages/json-to-js.md) 和 [json-field-filtering.md](../requirements/contexts/json-field-filtering.md)。

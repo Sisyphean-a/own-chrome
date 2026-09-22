@@ -12,6 +12,10 @@ scope: workspace
 
 - [context:vault-sync](contexts/vault-sync.md)：保险库、配置文件、分片与分片清单、同步头、冲突守卫、破坏性操作保护和恢复点。代码位置：`ProjectNexus/src/core`、`ProjectNexus/src/infrastructure`、`ProjectNexus/src/presentation`；实现包：`package:project-nexus`。
 
+- [context:activity-tracking](contexts/activity-tracking.md)：目标规则、被追踪页面、会话、心跳、交互与系统活跃时长、按日聚合日志和概览。代码位置：`PulseTrace/src`；实现包：`package:pulse-trace`。
+- [context:snippet-library](contexts/snippet-library.md)：片段、标签、片段标识、同步索引和沙箱运行。代码位置：`CodePocket/src`；实现包：`package:code-pocket`。
+- [context:json-field-filtering](contexts/json-field-filtering.md)：字段路径、指定层级与递归深度筛选、输出格式和生成代码。代码位置：`jsonToJs/src/shared`、`jsonToJs/src/stores`、`jsonToJs/src/features`；实现包：`package:json-to-js`。
+
 包是实现边界，不自动成为领域边界；当前没有跨包共享的领域上下文，也没有 `shared/` 页面。
 
 ## 作用域规则

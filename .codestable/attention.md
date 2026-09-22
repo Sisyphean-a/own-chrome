@@ -14,10 +14,16 @@
 - ProjectNexus 的破坏性同步（删除分类、强制全量拉取）不得为了跑通而去掉冲突检查或恢复点；失败必须恢复本地状态并真实抛出。
 - 保险库密码和加密密钥不得上传远程；ProjectNexus 的加密层有未修复的安全发现，改动它前先读包页“已知开放风险”。
 - ProjectNexus 的表现层（Vue 组件、stores、composables）不得直接 import `src/infrastructure/*` 或全局单例。
+- PulseTrace 的聚合只发生在后台：内容脚本只发心跳，概览页只读聚合日志；追踪时长是心跳推导值，不得当作精确计时。
+- CodePocket 的片段代码只能在独立标签或沙箱页面运行，不得在侧边栏、选项页或后台执行；GitHub token 只存本地设置。
+- jsonToJs 不得引入 `eval`/`new Function` 执行筛选：预览结果必须由解析生成代码得到。
 
 ## 最小验证
 
 - `H5-Bridge-DevTools/`：`npm run typecheck`、`npm run test`、`npm run build`；涉及真实扩展交互或图片字段写入时再运行 `npm run test:e2e`（脚本启动有界面 Chromium）。
 - `ProjectNexus/`：`npm run typecheck`、`npm run test`、`npm run build`；改同步或加密时补 `npm run test:coverage` 与 `npm run lint`。
+- `PulseTrace/`：`npm test`（无构建步骤）。
+- `CodePocket/`：`npm run build`（无自动化测试）。
+- `jsonToJs/`：`npm run build`、`npm run build:extension`（无自动化测试）。
 
 记忆页面只记录已验证的术语、稳定规则、架构边界和重要原因；任务过程、截图、生成产物和可由代码直接表达的普通实现细节不进入这里。
