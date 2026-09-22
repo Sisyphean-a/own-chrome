@@ -1,0 +1,193 @@
+import type { ILocalStore } from '../../core/application/ports/ILocalStore'
+import type { NexusConfig, NexusIndex } from '../../core/domain/entities/types'
+
+const CONFIG_KEY = 'nexus_config'
+const INDEX_KEY = 'nexus_index'
+const CACHE_PREFIX = 'nexus_cache_'
+
+declare const chrome: any;
+
+const defaultConfig: NexusConfig = {
+  githubToken: '',
+  gistId: null,
+  rootGistId: null,
+  legacyGistId: null,
+  schemaVersion: 3,
+  tokenVerifiedAt: null,
+  lastRemoteUpdatedAt: null,
+  lastSyncHeadHash: null,
+  shardStateDigest: {},
+  vaultRememberMode: 'session',
+  vaultAutoLockMinutes: 480,
+  vaultTrustedUntil: null,
+  syncInterval: 30,
+  theme: 'auto',
+}
+
+export class LocalStoreRepository implements ILocalStore {
+  private isExtension: boolean
+  private configCache: NexusConfig | null = null
+  private configPromise: Promise<NexusConfig> | null = null
+  private indexCache: NexusIndex | null = null
+  private indexPromise: Promise<NexusIndex | null> | null = null
+
+  constructor() {
+    this.isExtension = typeof chrome !== 'undefined' && !!chrome.storage
+  }
+
+  private async get(key: string): Promise<any> {
+    if (this.isExtension) {
+      const result = await chrome.storage.local.get(key)
+      return result[key]
+    } else {
+      const result = localStorage.getItem(key)
+      return result ? JSON.parse(result) : undefined
+    }
+  }
+
+  private async set(key: string, value: any): Promise<void> {
+    if (this.isExtension) {
+      await chrome.storage.local.set({ [key]: value })
+    } else {
+      localStorage.setItem(key, JSON.stringify(value))
+    }
+  }
+
+  private async remove(keys: string | string[]): Promise<void> {
+    if (this.isExtension) {
+      await chrome.storage.local.remove(keys)
+      return
+    }
+
+    if (Array.isArray(keys)) {
+      for (const key of keys) {
+        localStorage.removeItem(key)
+      }
+      return
+    }
+
+    localStorage.removeItem(keys)
+  }
+
+  async getConfig(): Promise<NexusConfig> {
+    if (this.configCache) {
+      return { ...this.configCache }
+    }
+
+    if (!this.configPromise) {
+      this.configPromise = (async () => {
+        const config = await this.get(CONFIG_KEY)
+        const merged = { ...defaultConfig, ...config }
+        if (!merged.rootGistId && merged.gistId) {
+          merged.rootGistId = merged.gistId
+        }
+        this.configCache = merged
+        return merged
+      })().finally(() => {
+        this.configPromise = null
+      })
+    }
+
+    return { ...(await this.configPromise) }
+  }
+
+  async saveConfig(config: Partial<NexusConfig>): Promise<void> {
+    const current = await this.getConfig()
+    const next = { ...current, ...config }
+    this.configCache = next
+    await this.set(CONFIG_KEY, next)
+  }
+
+  async getIndex(): Promise<NexusIndex | null> {
+    if (this.indexCache) {
+      return this.indexCache
+    }
+
+    if (!this.indexPromise) {
+      this.indexPromise = (async () => {
+        const index = (await this.get(INDEX_KEY)) || null
+        this.indexCache = index
+        return index
+      })().finally(() => {
+        this.indexPromise = null
+      })
+    }
+
+    return await this.indexPromise
+  }
+
+  async saveIndex(index: NexusIndex): Promise<void> {
+    this.indexCache = index
+    await this.set(INDEX_KEY, index)
+  }
+
+  async getCache(filename: string): Promise<string | null> {
+    return (await this.get(CACHE_PREFIX + filename)) || null
+  }
+
+  async saveCache(filename: string, content: string): Promise<void> {
+    await this.set(CACHE_PREFIX + filename, content)
+  }
+
+  async clearIndexAndCaches(): Promise<void> {
+    const keysToRemove = [INDEX_KEY]
+    this.indexCache = null
+    this.indexPromise = null
+
+    if (this.isExtension) {
+      const all = await chrome.storage.local.get(null)
+      for (const key of Object.keys(all || {})) {
+        if (key.startsWith(CACHE_PREFIX)) {
+          keysToRemove.push(key)
+        }
+      }
+      await this.remove(keysToRemove)
+      return
+    }
+
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith(CACHE_PREFIX)) {
+        keysToRemove.push(key)
+      }
+    }
+    await this.remove(keysToRemove)
+  }
+
+  async createRestorePoint(): Promise<{ restore(): Promise<void> }> {
+    const snapshot = await this.readIndexAndCaches()
+    return {
+      restore: async () => this.restoreIndexAndCaches(snapshot),
+    }
+  }
+
+  private async readIndexAndCaches(): Promise<Record<string, unknown>> {
+    if (this.isExtension) {
+      const all = await chrome.storage.local.get(null)
+      return Object.fromEntries(
+        Object.entries(all || {}).filter(([key]) =>
+          key === INDEX_KEY || key.startsWith(CACHE_PREFIX)),
+      )
+    }
+
+    const snapshot: Record<string, unknown> = {}
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key !== INDEX_KEY && !key?.startsWith(CACHE_PREFIX)) continue
+      const raw = localStorage.getItem(key)
+      if (raw !== null) snapshot[key] = JSON.parse(raw)
+    }
+    return snapshot
+  }
+
+  private async restoreIndexAndCaches(
+    snapshot: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
+    await this.clearIndexAndCaches()
+    for (const [key, value] of Object.entries(snapshot)) {
+      await this.set(key, value)
+    }
+    this.indexCache = (snapshot[INDEX_KEY] as NexusIndex | undefined) || null
+    this.indexPromise = null
+  }
+}

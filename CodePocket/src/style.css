@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Geek / Brutalist / Wireframe Theme */
+:root {
+  --el-color-primary: #2d2d2d;
+  --el-color-success: #16a34a;
+  --el-color-danger: #dc2626;
+  --el-border-radius-base: 0px;
+  --el-border-radius-small: 0px;
+  --el-border-radius-round: 0px;
+  --el-box-shadow-light: none;
+  --el-font-family: "Courier New", Courier, monospace;
+}
+
+html,
+body {
+  @apply bg-gray-50 text-black font-mono overflow-hidden;
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+
+  /* Much clearer grid with less noise */
+  background-image: linear-gradient(#d6d0b8 1px, transparent 1px),
+    linear-gradient(90deg, #d6d0b8 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: -1px -1px;
+}
+
+/* Ensure #app takes full height and adds padding for floating effect */
+#app {
+  @apply p-4 h-full box-border;
+}
+
+/* Force Monospace Everywhere */
+* {
+  font-family: "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas",
+    "Liberation Mono", "Courier New", monospace !important;
+}
+
+/* --- Element Plus Overrides (Using !important to guarantee minimal style) --- */
+
+/* Buttons */
+.el-button {
+  @apply rounded-none border-2 border-black text-black bg-white shadow-none transition-none !important;
+  text-transform: uppercase;
+  font-weight: 700 !important;
+}
+
+.el-button:hover {
+  @apply bg-black text-white border-black !important;
+}
+
+/* Primary Button (Inverted by default) */
+.el-button--primary {
+  @apply bg-black text-white border-black !important;
+}
+
+.el-button--primary:hover {
+  @apply bg-white text-black border-black !important;
+}
+
+/* Success/Action Buttons */
+.el-button--success {
+  @apply border-black text-black bg-white !important;
+}
+
+.el-button--success:hover {
+  @apply bg-green-600 text-white border-black !important;
+}
+
+/* Danger Buttons */
+.el-button--danger {
+  @apply border-red-600 text-red-600 !important;
+}
+
+/* Inputs */
+.el-input__wrapper {
+  @apply rounded-none shadow-none border-2 border-black bg-white !important;
+  padding-left: 8px !important;
+}
+
+.el-input__wrapper.is-focus {
+  @apply border-black ring-0 !important;
+  box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 1) !important;
+  /* Hard shadow on focus */
+}
+
+.el-input__inner {
+  @apply font-mono text-black !important;
+}
+
+/* Cards */
+.el-card {
+  @apply rounded-none border-2 border-black bg-white !important;
+  box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 0) !important;
+  position: relative;
+  transition: all 0.1s ease-in-out;
+  margin-bottom: 1rem !important;
+}
+
+.el-card:hover {
+  box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1) !important;
+  transform: translate(-2px, -2px);
+  z-index: 10;
+}
+
+.el-card__header {
+  @apply border-b-2 border-black bg-gray-100 p-2 !important;
+}
+
+/* Dialogs */
+.el-dialog {
+  @apply rounded-none border-2 border-black !important;
+  box-shadow: 8px 8px 0px 0px rgba(0, 0, 0, 1) !important;
+}
+
+.el-dialog__header {
+  @apply border-b-2 border-black mr-0 bg-white !important;
+}
+
+.el-dialog__body {
+  @apply p-0 !important;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #ebe5ce;
+  border-left: 1px solid #2d2d2d;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2d2d2d;
+  border: 1px solid #fdf6e3;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #333;
+}
+
+/* Custom Utility Classes */
+.geek-box {
+  @apply border-2 border-black bg-white p-2;
+}
+
+.geek-title {
+  @apply font-bold text-lg uppercase tracking-wider border-b-2 border-black pb-1 mb-2;
+}

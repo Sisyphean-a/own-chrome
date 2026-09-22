@@ -1,0 +1,54 @@
+@import './base.css';
+@import './design-tokens.css';
+@import './animations.css';
+
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  font-weight: var(--font-weight-normal);
+  font-family: var(--font-family-base);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+a,
+.green {
+  text-decoration: none;
+  color: var(--color-success);
+  transition: var(--transition-fast);
+  padding: var(--spacing-xs);
+  border-radius: var(--radius-xs);
+}
+
+/* 确保所有元素都使用适中的高度 */
+* {
+  line-height: 1.4;
+}
+
+/* 针对特定元素的高度优化 */
+p,
+div,
+span {
+  margin: 0;
+  padding: 0;
+}
+
+/* 优化列表的间距 */
+ul,
+ol {
+  margin: 0;
+  padding-left: 1em;
+}
+
+li {
+  margin: 0;
+  padding: 0;
+}
+
+a:hover {
+  background-color: var(--color-success-light);
+  color: var(--color-success);
+}

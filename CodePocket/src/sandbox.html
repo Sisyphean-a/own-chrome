@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Sandbox</title>
+</head>
+
+<body>
+    <script>
+        window.addEventListener('message', (event) => {
+            // In a real app, verify event.origin here matches chrome-extension://ID
+            const code = event.data;
+            if (typeof code === 'string') {
+                // Shim to intercept downloads and forward to parent
+                const downloadShim = `
+                    <script>
+                        (function() {
+                            // Helper to send to parent
+                            const sendDownload = (url, filename) => {
+                                window.parent.postMessage({
+                                    type: 'DOWNLOAD_REQUEST',
+                                    url: url,
+                                    filename: filename
+                                }, '*');
+                            };
+
+                            // 1. Intercept programmatic clicks (link.click())
+                            const originalClick = HTMLAnchorElement.prototype.click;
+                            HTMLAnchorElement.prototype.click = function() {
+                                if (this.hasAttribute('download')) {
+                                    sendDownload(this.href, this.download);
+                                    return;
+                                }
+                                return originalClick.apply(this, arguments);
+                            };
+
+                            // 2. Intercept user clicks (bubbling/capturing)
+                            window.addEventListener('click', (e) => {
+                                const anchor = e.target.closest('a[download]');
+                                if (anchor) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    sendDownload(anchor.href, anchor.download);
+                                }
+                            }, true);
+                        })();
+                    <\/script>
+                `;
+
+                document.open();
+                document.write(downloadShim + code);
+                document.close();
+            }
+        });
+    </script>
+</body>
+
+</html>

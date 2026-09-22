@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "JsonToJs - 智能JSON转换工具",
+  "version": "1.0.0",
+  "description": "一个基于Vue 3的现代化JSON数据转换平台，提供可视化的JSON处理、JavaScript代码编辑和AI辅助转换功能。",
+  "permissions": ["storage", "activeTab", "tabs"],
+  "action": {
+    "default_title": "JsonToJs - JSON转换工具",
+    "default_icon": {
+      "16": "public/favicon.ico",
+      "32": "public/favicon.ico",
+      "48": "public/favicon.ico",
+      "128": "public/favicon.ico"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*", "public/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "16": "public/favicon.ico",
+    "32": "public/favicon.ico",
+    "48": "public/favicon.ico",
+    "128": "public/favicon.ico"
+  }
+}

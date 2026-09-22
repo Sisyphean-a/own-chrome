@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Code Pocket",
+  "version": "1.0.0",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "点击打开 Code Pocket",
+    "default_icon": {
+      "32": "pixel_art_32.png",
+      "48": "pixel_art.png",
+      "128": "pixel_art_128.png"
+    }
+  },
+  "icons": {
+    "32": "pixel_art_32.png",
+    "48": "pixel_art.png",
+    "128": "pixel_art_128.png"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "sandbox": {
+    "pages": [
+      "src/sandbox.html"
+    ]
+  },
+  "content_security_policy": {
+    "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval';",
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  }
+}
