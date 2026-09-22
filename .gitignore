@@ -1,0 +1,12 @@
+# Root tooling and temporary state
+.codegraph/
+.tmp/
+
+# Shared local/build artifacts
+**/node_modules/
+**/dist/
+
+# Local logs and OS noise
+*.log
+.DS_Store
+Thumbs.db
