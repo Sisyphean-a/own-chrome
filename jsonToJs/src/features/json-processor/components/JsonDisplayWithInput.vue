@@ -1,49 +1,48 @@
 <template>
-  <div class="json-display-with-input">
-    <!-- 上部分：JSON展示区域 (自适应剩余空间) -->
-    <div class="json-display-area">
-      <json-view
-        :json="jsonState.parsedJson"
-        click-mode="filter"
-        @field-click="handleFieldClick"
-      />
+  <div class="source-layout">
+    <div class="section-heading">
+      <div>
+        <span class="step">01 / SOURCE</span>
+        <h2>输入 JSON</h2>
+      </div>
+      <v-btn
+        variant="outlined"
+        size="small"
+        color="primary"
+        :loading="isReadingClipboard"
+        @click="readFromClipboard"
+      >粘贴剪贴板</v-btn>
     </div>
 
-    <!-- 下部分：输入区域和筛选面板 (内容自适应高度) -->
-    <div class="bottom-area">
-      <!-- 输入区域 -->
-      <div class="input-section">
-        <div class="input-container">
-          <v-text-field
-            v-model="localJsonInput"
-            label="输入JSON数据"
-            variant="outlined"
-            density="compact"
-            hide-details
-            @input="handleInput"
-            :error="hasError"
-            :error-messages="hasError ? '解析错误' : ''"
-            class="json-input-field"
-          />
-          <v-btn
-            size="small"
-            variant="outlined"
-            color="primary"
-            class="btn-standard"
-            @click="readFromClipboard"
-            :loading="isReadingClipboard"
-            :disabled="isReadingClipboard"
-            title="读取剪切板"
-          >
-            读取剪切板
-          </v-btn>
-        </div>
+    <div class="editor-area">
+      <label for="json-source" class="sr-only">JSON 数据</label>
+      <textarea
+        id="json-source"
+        v-model="localJsonInput"
+        spellcheck="false"
+        placeholder="在这里粘贴 JSON 数据…"
+        :aria-invalid="hasError"
+        :aria-describedby="hasError ? 'json-error' : undefined"
+        @input="handleInput"
+      ></textarea>
+      <div class="editor-footer">
+        <span v-if="hasError" id="json-error" class="error-message" role="alert">{{ jsonState.parseErrors[0].message }}</span>
+        <span v-else-if="clipboardError" class="error-message" role="alert">{{ clipboardError }}</span>
+        <span v-else>{{ jsonState.parsedJson !== null ? 'JSON 格式有效' : '等待输入 JSON' }}</span>
+        <span>{{ localJsonInput.length.toLocaleString() }} 字符</span>
       </div>
+    </div>
 
-      <!-- 筛选面板 -->
-      <div class="filter-section">
-        <filter-panel @field-click="handleFieldClick" />
+    <div class="preview-heading">
+      <div>
+        <h3>结构预览</h3>
+        <p>点击字段名，将它添加到筛选列表</p>
       </div>
+      <span class="preview-label">可交互</span>
+    </div>
+    <div class="json-display-area">
+      <JsonView v-if="jsonState.parsedJson !== null" :json="jsonState.parsedJson" :font-size="14" click-mode="filter" @field-click="handleFieldClick" />
+      <div v-else class="preview-empty">输入有效的 JSON 后，在这里浏览数据结构。</div>
     </div>
   </div>
 </template>
@@ -52,58 +51,42 @@
 import { ref, computed, watch } from 'vue'
 import { useJsonContext } from '../composables/useJsonContext.js'
 import JsonView from './JsonView.vue'
-import FilterPanel from './FilterPanel.vue'
 
-// 使用JSON上下文，不再需要props和emits
 const { jsonState, updateJsonInput, addSelectedKey } = useJsonContext()
-
-// 本地状态只管理UI相关的
 const localJsonInput = ref('')
 const isReadingClipboard = ref(false)
+const clipboardError = ref('')
 
-// 监听context状态变化
 watch(
   () => jsonState.inputJson,
   (newVal) => {
-    if (newVal !== localJsonInput.value) {
-      localJsonInput.value = newVal
-    }
+    if (newVal !== localJsonInput.value) localJsonInput.value = newVal
   },
   { immediate: true }
 )
 
-// 计算是否有错误
 const hasError = computed(() => jsonState.parseErrors.length > 0)
-
-// 处理输入变化
 const handleInput = () => {
-  // 使用context更新JSON输入
+  clipboardError.value = ''
   updateJsonInput(localJsonInput.value)
 }
+const handleFieldClick = (fieldName) => addSelectedKey(fieldName)
 
-// 处理字段点击事件
-const handleFieldClick = (fieldName) => {
-  addSelectedKey(fieldName)
-}
-
-// 读取剪切板内容
 const readFromClipboard = async () => {
-  if (!navigator.clipboard) {
-    console.warn('剪切板API不可用')
+  if (!navigator.clipboard?.readText) {
+    clipboardError.value = '当前环境无法读取剪贴板，请手动粘贴。'
     return
   }
-
   try {
     isReadingClipboard.value = true
+    clipboardError.value = ''
     const text = await navigator.clipboard.readText()
-
     if (text.trim()) {
       localJsonInput.value = text.trim()
       handleInput()
     }
   } catch (error) {
-    console.error('读取剪切板失败:', error)
-    // 可以在这里添加用户提示
+    clipboardError.value = '读取剪贴板失败，请手动粘贴。'
   } finally {
     isReadingClipboard.value = false
   }
@@ -111,78 +94,57 @@ const readFromClipboard = async () => {
 </script>
 
 <style lang="scss" scoped>
-.json-display-with-input {
+.source-layout { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.section-heading, .preview-heading {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-}
-
-.json-display-area {
-  flex: 1; /* 占据剩余所有空间 */
-  overflow: auto;
-  min-height: 0;
-  position: relative;
-}
-
-.bottom-area {
-  flex: 0 0 auto; /* 不伸缩，高度完全由内容决定 */
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--border-light);
-  background: var(--bg-secondary);
-  max-height: 60vh; /* 防止下方区域过高，最大占屏60% */
-  overflow: hidden;
-  position: relative;
-  z-index: 10;
-}
-
-.input-section {
-  flex-shrink: 0;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-bottom: 1px solid var(--border-light);
-}
-
-.filter-section {
-  flex: 0 0 auto; /* 改为 auto，不让它自动撑满父容器 */
-  overflow-y: auto;
-  min-height: 0;
-  max-height: 100%;
-}
-
-.input-container {
-  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: 12px;
+  padding: 18px 22px 14px;
+}
+.step { font-size: 10px; font-weight: 700; letter-spacing: .14em; color: #2563eb; }
+h2 { margin-top: 3px; font-size: 17px; font-weight: 700; }
+h3 { font-size: 14px; font-weight: 700; }
+p { margin-top: 2px; font-size: 12px; color: var(--text-secondary); }
+.editor-area { padding: 0 22px 18px; }
+textarea {
+  display: block;
   width: 100%;
+  height: clamp(150px, 25vh, 260px);
+  padding: 14px 16px;
+  resize: vertical;
+  border: 1px solid #d4deea;
+  border-radius: 9px 9px 0 0;
+  outline: none;
+  background: #f8fafc;
+  color: #17253b;
+  font: 13px/1.6 var(--font-family-mono);
+  tab-size: 2;
 }
-
-.json-input-field {
-  flex: 1;
-  min-width: 0;
-
-  :deep(.v-field__input) {
-    min-height: 24px;
-    padding-top: 6px;
-    padding-bottom: 6px;
-  }
+textarea:focus { border-color: #2563eb; box-shadow: inset 0 0 0 1px #2563eb; }
+textarea[aria-invalid="true"] { border-color: #c24141; }
+.editor-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid #d4deea;
+  border-top: 0;
+  border-radius: 0 0 9px 9px;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
-
-/* 按钮样式内联 */
-.btn-standard {
-  min-width: auto !important;
-  width: auto !important;
-  flex-shrink: 0;
-  height: 32px !important;
-  padding: 0 16px !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  text-transform: none !important;
-  letter-spacing: 0 !important;
-}
-
-.btn-standard :deep(.v-btn__content) {
-  white-space: nowrap;
+.error-message { color: #b42332; overflow-wrap: anywhere; }
+.editor-footer span:last-child { white-space: nowrap; margin-left: auto; }
+.preview-heading { border-top: 1px solid #e2e8f0; padding-top: 14px; padding-bottom: 12px; }
+.preview-label { color: #53647c; font-size: 11px; white-space: nowrap; }
+.json-display-area { flex: 1; min-height: 0; overflow: auto; padding: 0 18px 18px; }
+.preview-empty { padding: 28px 16px; border: 1px dashed #d4deea; border-radius: 8px; color: var(--text-secondary); font-size: 12px; text-align: center; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 600px) {
+  .section-heading, .preview-heading { padding-left: 16px; padding-right: 16px; }
+  .editor-area { padding: 0 16px 16px; }
+  .json-display-area { padding: 0 12px 16px; }
+  textarea { height: 160px; }
 }
 </style>
