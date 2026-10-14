@@ -1,16 +1,24 @@
 import type { Dispatch, SetStateAction } from "react";
-import type { PanelCommand, PanelCommandRequest } from "../shared/messageTypes";
+import type {
+  PanelCommand,
+  PanelCommandRequest,
+  PanelCommandResponse,
+} from "../shared/messageTypes";
 import type { AppViewState, ToastState } from "./types";
 
 export interface PanelActionContext {
-  dispatchRuntimeMessage: (message: PanelCommandRequest) => void;
+  /** 面板命令一律以内容脚本的执行结果结算，调用方只能据此宣称成功或失败。 */
+  dispatchRuntimeMessage: (message: PanelCommandRequest) => Promise<PanelCommandResponse>;
   setState: Dispatch<SetStateAction<AppViewState>>;
   state: AppViewState;
   tabId: number;
 }
 
-export function postCommand(context: PanelActionContext, command: PanelCommand): void {
-  context.dispatchRuntimeMessage({
+export function postCommand(
+  context: PanelActionContext,
+  command: PanelCommand,
+): Promise<PanelCommandResponse> {
+  return context.dispatchRuntimeMessage({
     type: "PANEL_COMMAND",
     tabId: context.tabId,
     command,

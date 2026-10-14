@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { Dispatch, SetStateAction } from "react";
 import { STORAGE_KEY } from "../shared/constants";
 import { createDefaultOriginState } from "../shared/storage";
 import { createSender } from "../test/factories";
-import { loadSnapshotForTab } from "./runtimeBridge";
+import { loadSnapshotForTab, sendPanelCommand } from "./runtimeBridge";
+import type { AppViewState, ToastState } from "./types";
 
 const origin = "https://example.com";
 let storageBucket: Record<string, unknown>;
@@ -36,6 +38,72 @@ describe("loadSnapshotForTab", () => {
     await expect(loadSnapshotForTab(7)).resolves.toBeNull();
   });
 });
+
+describe("sendPanelCommand", () => {
+  it("内容脚本回执失败时把真实错误提示出来，并返回失败", async () => {
+    const runtimeMessages = installRuntimeMessageMock({
+      ok: false,
+      message: "存储写入失败",
+    });
+    const channel = createStateChannel();
+
+    const response = await sendPanelCommand(
+      { type: "PANEL_COMMAND", tabId: 7, command: { type: "CLEAR_LOGS" } },
+      channel.setState,
+    );
+
+    expect(runtimeMessages).toHaveLength(1);
+    expect(response).toEqual({ ok: false, message: "存储写入失败" });
+    expect(channel.lastToast()).toEqual({ level: "error", message: "存储写入失败" });
+  });
+
+  it("命令成功时不弹错误提示，并返回成功", async () => {
+    installRuntimeMessageMock({ ok: true });
+    const channel = createStateChannel();
+
+    const response = await sendPanelCommand(
+      { type: "PANEL_COMMAND", tabId: 7, command: { type: "CLEAR_LOGS" } },
+      channel.setState,
+    );
+
+    expect(response).toEqual({ ok: true });
+    expect(channel.toasts).toEqual([]);
+  });
+});
+
+function createStateChannel(): {
+  setState: Dispatch<SetStateAction<AppViewState>>;
+  toasts: Array<ToastState | null>;
+  lastToast: () => ToastState | null;
+} {
+  let state = { toast: null } as AppViewState;
+  const toasts: Array<ToastState | null> = [];
+  return {
+    setState(updater) {
+      state = typeof updater === "function" ? updater(state) : updater;
+      toasts.push(state.toast);
+    },
+    toasts,
+    lastToast: () => toasts.at(-1) ?? null,
+  };
+}
+
+function installRuntimeMessageMock(
+  response: { ok: true } | { ok: false; message: string },
+): unknown[] {
+  const messages: unknown[] = [];
+  (globalThis as typeof globalThis & { chrome: typeof chrome }).chrome = {
+    ...(globalThis.chrome ?? {}),
+    runtime: {
+      id: "test-extension",
+      async sendMessage(message: unknown) {
+        messages.push(message);
+        return response;
+      },
+    },
+  } as unknown as typeof chrome;
+  return messages;
+}
 
 function installChromeMock(): void {
   (globalThis as typeof globalThis & { chrome: typeof chrome }).chrome = {

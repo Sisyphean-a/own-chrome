@@ -9,6 +9,7 @@ import {
 } from "../../imageTools";
 import { formatJson, safeParseJson } from "../../../shared/json";
 import { ResponseImageTools } from "./ResponseImageTools";
+import { isResponseDraftDirty } from "../../utils";
 import {
   Badge,
   EmptyState,
@@ -47,7 +48,11 @@ export function ResponseDetailPane({
         <ResponseImageTools controller={controller} />
         <ResponseDetailJson controller={controller} draft={draft} />
       </div>
-      <ResponseFooter controller={controller} record={record} />
+      <ResponseFooter
+        controller={controller}
+        record={record}
+        dirty={isResponseDraftDirty(draft, record.response)}
+      />
     </section>
   );
 }
@@ -276,14 +281,17 @@ function ResponseDetailJson({
 function ResponseFooter({
   controller,
   record,
+  dirty,
 }: {
   controller: PanelController;
   record: ResponseRecord;
+  dirty: boolean;
 }) {
   return (
     <FooterActions
       primary={
         <>
+          {dirty ? <Badge tone="orange">草稿未保存</Badge> : null}
           <button
             type="button"
             className="control-button control-button--primary"

@@ -94,7 +94,10 @@ export function ResponseImageTools({ controller }: { controller: PanelController
           current.responseDraft?.id === draft.id
             ? { ...current.responseDraft, detailText: result.detailText }
             : current.responseDraft,
-        toast: { level: "success", message: `已写入${formatLabels[format]}` },
+        toast: {
+          level: "success",
+          message: `已写入草稿（${formatLabels[format]}），点「保存发送」后生效`,
+        },
       }));
     } catch (error) {
       pushToast(

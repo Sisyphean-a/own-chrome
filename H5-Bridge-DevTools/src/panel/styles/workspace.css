@@ -75,6 +75,17 @@
   height: 100%;
 }
 
+/*
+ * Rule：窄屏详情页与 .subtab-bar 同为 .rules-frame 的子元素，height: 100% 会按整帧内容高度计算，
+ * 把子标签栏的 32px 算漏；.rules-frame 的 overflow: hidden 会把页脚（保存发送等）整块裁掉。
+ * Guarantee：页脚始终留在帧内，可点。
+ */
+.rules-frame > .workspace-pane {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
 .workspace-pane__header {
   display: flex;
   align-items: center;

@@ -59,6 +59,7 @@ import {
   selectSender,
 } from "./senderActions";
 import type { AppViewState } from "./types";
+import type { PanelCommandResponse } from "../shared/messageTypes";
 
 const initialState: AppViewState = {
   navigation: createInitialNavigationState(),
@@ -89,7 +90,7 @@ export interface PanelController {
   selectedResponseRecord: ResponseRecord | null;
   responseCount: number;
   pairedSenderCount: number;
-  postCommand: (command: Parameters<typeof postCommand>[1]) => void;
+  postCommand: (command: Parameters<typeof postCommand>[1]) => Promise<PanelCommandResponse>;
   selectPanelTab: (tab: AppViewState["activeTab"]) => void;
   selectRulesSubTab: (tab: AppViewState["rulesSubTab"]) => void;
   selectSender: (senderId: string) => void;
@@ -102,11 +103,11 @@ export interface PanelController {
   addBlankSender: () => void;
   addPresetSender: (presetId: string) => void;
   createResponseForSender: (senderId: string) => void;
-  saveResponse: () => void;
+  saveResponse: () => Promise<void>;
   deleteResponse: () => void;
   resetResponse: () => void;
   formatCurrentResponseJson: () => void;
-  triggerSelectedResponse: () => void;
+  triggerSelectedResponse: () => Promise<void>;
   setActiveResponse: (senderId: string, responseId: string | null) => void;
   createSenderFromLog: (log: BridgeLogItem) => void;
   sendManualEmit: () => void;

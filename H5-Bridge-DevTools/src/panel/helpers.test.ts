@@ -124,6 +124,56 @@ describe("syncSnapshotState", () => {
     expect(next.toast).toBeNull();
   });
 
+  it("本面板自己保存后的快照变化不算远端更新（草稿对齐落盘值、不覆盖成功提示）", () => {
+    const response = createResponse("resp-1", { name: "旧响应" });
+    const sender = createSender("sender-1", { responses: [response], activeResponseId: response.id });
+    const current: AppViewState = {
+      ...createViewState({ senders: [sender] }),
+      selectedResponse: { senderId: sender.id, responseId: response.id },
+      responseDraft: { ...createResponseDraft(sender.id, response), name: "本地响应修改" },
+    };
+
+    const next = syncSnapshotState(
+      current,
+      createSnapshot({
+        senders: [
+          createSender(sender.id, {
+            ...sender,
+            responses: [{ ...response, name: "本地响应修改" }],
+          }),
+        ],
+      }),
+    );
+
+    expect(next.responseDraft?.name).toBe("本地响应修改");
+    expect(next.toast).toBeNull();
+  });
+
+  it("草稿名称带首尾空格时保存后不报未保存（与保存的 trim 一致）", () => {
+    const response = createResponse("resp-1", { name: "旧响应" });
+    const sender = createSender("sender-1", { responses: [response], activeResponseId: response.id });
+    const current: AppViewState = {
+      ...createViewState({ senders: [sender] }),
+      selectedResponse: { senderId: sender.id, responseId: response.id },
+      responseDraft: { ...createResponseDraft(sender.id, response), name: " 本地响应修改 " },
+    };
+
+    const next = syncSnapshotState(
+      current,
+      createSnapshot({
+        senders: [
+          createSender(sender.id, {
+            ...sender,
+            responses: [{ ...response, name: "本地响应修改" }],
+          }),
+        ],
+      }),
+    );
+
+    expect(next.responseDraft?.name).toBe("本地响应修改");
+    expect(next.toast).toBeNull();
+  });
+
   it("在响应仍存在时会保留本地已修改的 responseDraft 并提示远端更新", () => {
     const response = createResponse("resp-1", { name: "旧响应" });
     const sender = createSender("sender-1", { responses: [response], activeResponseId: response.id });

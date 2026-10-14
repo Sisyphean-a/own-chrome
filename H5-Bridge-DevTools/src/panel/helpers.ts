@@ -1,7 +1,7 @@
 import type { BridgePanelSnapshot } from "../shared/bridgeTypes";
 import { syncNavigationSnapshotState } from "./navigationState";
 import type { AppViewState, ResponseDraft, SenderDraft } from "./types";
-import { createResponseDraft, createSenderDraft } from "./utils";
+import { createResponseDraft, createSenderDraft, isResponseDraftDirty } from "./utils";
 
 export function syncSnapshotState(
   current: AppViewState,
@@ -95,27 +95,20 @@ function syncResponseDraft(
   const previousSender = current.snapshot?.senders.find((item) => item.id === ref.senderId);
   const previousResponse = previousSender?.responses.find((item) => item.id === ref.responseId);
   const previousDraft = previousResponse ? createResponseDraft(ref.senderId, previousResponse) : null;
-  const hasLocalEdits = previousDraft ? isResponseDraftDirty(draft, previousDraft) : true;
+  const hasLocalEdits = previousResponse ? isResponseDraftDirty(draft, previousResponse) : true;
+  // Rule：存储值已与本地草稿一致，说明这次变化是本面板自己的保存，不算远端更新。
+  const draftMatchesStored = !isResponseDraftDirty(draft, response);
+  const keepLocalDraft = hasLocalEdits && !draftMatchesStored;
   return {
     selectedResponse: ref,
-    responseDraft: hasLocalEdits ? draft : freshDraft,
+    responseDraft: keepLocalDraft ? draft : freshDraft,
     preservedRemoteUpdate:
-      hasLocalEdits && didResponseChange(previousDraft, freshDraft),
+      keepLocalDraft && didResponseChange(previousDraft, freshDraft),
   };
 }
 
 function isSenderDraftDirty(draft: SenderDraft, fresh: SenderDraft): boolean {
   return draft.name !== fresh.name || draft.matchEvent !== fresh.matchEvent;
-}
-
-function isResponseDraftDirty(draft: ResponseDraft, fresh: ResponseDraft): boolean {
-  return (
-    draft.name !== fresh.name ||
-    draft.delayMs !== fresh.delayMs ||
-    draft.mode !== fresh.mode ||
-    draft.eventName !== fresh.eventName ||
-    draft.detailText !== fresh.detailText
-  );
 }
 
 function buildRemoteUpdateToast(
@@ -169,7 +162,13 @@ function didResponseChange(previous: ResponseDraft | null, next: ResponseDraft):
   if (!previous) {
     return true;
   }
-  return isResponseDraftDirty(previous, next);
+  return (
+    previous.name !== next.name ||
+    previous.delayMs !== next.delayMs ||
+    previous.mode !== next.mode ||
+    previous.eventName !== next.eventName ||
+    previous.detailText !== next.detailText
+  );
 }
 
 export function hasActiveExtensionRuntime(

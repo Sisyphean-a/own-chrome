@@ -49,6 +49,28 @@ describe("ResponsesView", () => {
     expect(markup).not.toContain("插入图片");
   });
 
+  it("草稿与已保存响应一致时不显示未保存提示", () => {
+    const markup = renderToStaticMarkup(
+      <ResponsesView controller={createController()} isWide={false} />,
+    );
+
+    expect(markup).toContain("保存发送");
+    expect(markup).not.toContain("草稿未保存");
+  });
+
+  it("草稿改动后提示未保存（插入图片等只写草稿）", () => {
+    const controller = createController();
+    controller.state.responseDraft = {
+      ...controller.state.responseDraft!,
+      detailText: '{\n  "message": "with image"\n}',
+    };
+    const markup = renderToStaticMarkup(
+      <ResponsesView controller={controller} isWide={false} />,
+    );
+
+    expect(markup).toContain("草稿未保存");
+  });
+
   it("列表模式会提供独立安卓发送入口", () => {
     const regular = createSender("sender-1", { name: "登录发送" });
     const standalone = createStandaloneSender([

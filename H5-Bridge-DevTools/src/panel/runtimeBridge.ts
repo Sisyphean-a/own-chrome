@@ -26,22 +26,23 @@ interface TabUpdateInfo {
 export function usePanelRuntime(
   tabId: number,
   setState: Dispatch<SetStateAction<AppViewState>>,
-): (message: PanelCommandRequest) => void {
+): (message: PanelCommandRequest) => Promise<PanelCommandResponse> {
   const originRef = useRef<string | null>(null);
   const dispatchRuntimeMessage = useMemo(
-    () => (message: PanelCommandRequest) => {
-      void sendPanelCommand(message, setState);
-    },
+    () => (message: PanelCommandRequest) => sendPanelCommand(message, setState),
     [setState],
   );
 
   useEffect(() => {
     let disposed = false;
+    let snapshotRequestId = 0;
 
     const refreshSnapshot = async () => {
+      // Rule：只采用最后一次快照读取的结果；否则在途的旧快照会把刚保存的响应当成“远端更新”。
+      const requestId = ++snapshotRequestId;
       try {
         const snapshot = await loadSnapshotForTab(tabId);
-        if (disposed) {
+        if (disposed || requestId !== snapshotRequestId) {
           return;
         }
         originRef.current = snapshot?.origin ?? null;
@@ -163,17 +164,24 @@ function isSupportedPage(href: string): boolean {
   return matchesContentScriptPattern(href, patterns);
 }
 
-async function sendPanelCommand(
+/**
+ * 命令失败在这里统一提示；同时把结果交给调用方，让“已保存/已触发”只在真实成功后才说。
+ */
+/** 导出以便单元测试验证“失败必须显式呈现”。 */
+export async function sendPanelCommand(
   message: PanelCommandRequest,
   setState: Dispatch<SetStateAction<AppViewState>>,
-): Promise<void> {
+): Promise<PanelCommandResponse> {
   try {
     const response = await sendRuntimeMessage(message);
     if (!response.ok) {
       setToast({ setState }, "error", response.message);
     }
+    return response;
   } catch (error) {
-    setToast({ setState }, "error", toErrorMessage(error));
+    const failure: PanelCommandResponse = { ok: false, message: toErrorMessage(error) };
+    setToast({ setState }, "error", failure.message);
+    return failure;
   }
 }
 

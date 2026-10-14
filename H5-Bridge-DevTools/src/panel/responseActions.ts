@@ -15,7 +15,7 @@ import {
   replaceRouteState,
   shouldReplaceDetailRoute,
 } from "./navigationState";
-import { createResponseDraft, formatResponseDraftJson } from "./utils";
+import { createResponseDraft, formatResponseDraftJson, isResponseDraftDirty } from "./utils";
 import { findResponseRecord, findSender } from "./controllerFilters";
 import type { PanelActionContext } from "./actionContext";
 import { postCommand, setToast } from "./actionContext";
@@ -70,7 +70,7 @@ export function createResponseForSender(context: PanelActionContext, senderId: s
   });
 }
 
-export function saveResponse(context: PanelActionContext): void {
+export async function saveResponse(context: PanelActionContext): Promise<void> {
   const record = findResponseRecord(context.state.snapshot?.senders ?? [], context.state.selectedResponse);
   const draft = context.state.responseDraft;
   if (!record || !draft) {
@@ -87,12 +87,15 @@ export function saveResponse(context: PanelActionContext): void {
     setToast(context, "error", errors[0]);
     return;
   }
-  postCommand(context, {
+  // 失败提示由 sendPanelCommand 统一发出；只有内容脚本确认写入成功才宣称“响应已保存”。
+  const response = await postCommand(context, {
     type: "UPSERT_RESPONSE",
     senderId: record.sender.id,
     response: result.response,
   });
-  setToast(context, "success", "响应已保存");
+  if (response.ok) {
+    setToast(context, "success", "响应已保存");
+  }
 }
 
 export function deleteResponse(context: PanelActionContext): void {
@@ -153,17 +156,26 @@ export function formatCurrentResponseJson(context: PanelActionContext): void {
   }));
 }
 
-export function triggerSelectedResponse(context: PanelActionContext): void {
+export async function triggerSelectedResponse(context: PanelActionContext): Promise<void> {
   const ref = context.state.selectedResponse;
   if (!ref) {
     return;
   }
-  postCommand(context, {
+  const record = findResponseRecord(context.state.snapshot?.senders ?? [], ref);
+  const draft = context.state.responseDraft;
+  // 触发测试读的是已落盘的响应；草稿未保存时必须明说，否则页面回的是旧值。
+  if (record && draft && isResponseDraftDirty(draft, record.response)) {
+    setToast(context, "error", "草稿尚未保存，先点「保存发送」再触发测试");
+    return;
+  }
+  const response = await postCommand(context, {
     type: "TRIGGER_RESPONSE",
     senderId: ref.senderId,
     responseId: ref.responseId,
   });
-  setToast(context, "success", "已触发测试");
+  if (response.ok) {
+    setToast(context, "success", "已触发测试");
+  }
 }
 
 export function setActiveResponse(

@@ -7,10 +7,17 @@ import { chromium } from "playwright";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const extensionPath = join(root, "dist");
+// 扩展只在非 headless 启动路径下可加载，但默认不应弹窗打扰用户：
+// 默认用新 headless（channel: chromium）静默跑；需要看界面时设 E2E_HEADED=1。
+const headed = process.env.E2E_HEADED === "1";
 
 const tempRoot = await mkdtemp(join(tmpdir(), "h5-bridge-devtools-e2e-"));
 const fixturePath = join(tempRoot, "e2e-fixture.svg");
 const userDataDir = join(tempRoot, "chrome-profile");
+
+// 1×1 PNG：既能在面板里解码出预览，又小到不触发 Detail JSON 折叠
+const PNG_DATA_URL_PAYLOAD =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
 
 await writeFile(
   fixturePath,
@@ -41,7 +48,7 @@ try {
   const pageAUrl = `${origin}/page-a.html`;
   const pageBUrl = `${origin}/page-b.html`;
   const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false,
+    ...(headed ? { headless: false } : { channel: "chromium", headless: true }),
     args: [
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
@@ -146,6 +153,9 @@ try {
       "Expected final response to include updated base64 data.",
     );
 
+    await verifyUnsavedDraftBlocksTrigger(panelA, pageA);
+    await verifyNarrowFooterReachable(panelA);
+
     console.log(
       JSON.stringify(
         {
@@ -159,6 +169,8 @@ try {
             "page-b-received-updated-response-without-reload",
             "image-tool-wrote-base64",
             "image-tool-wrote-android-uri",
+            "unsaved-draft-blocks-trigger",
+            "narrow-panel-save-footer-reachable",
           ],
           finalResponse,
         },
@@ -279,8 +291,11 @@ async function overwriteResponseJson(panelPage, text) {
 /** @param {import("playwright").Page} panelPage */
 async function saveResponse(panelPage) {
   await panelPage.getByText("保存发送", { exact: true }).click();
+  // 成功提示要等后台回执，且面板可能是后台标签页（rAF 被节流），所以用定时轮询。
   await panelPage.waitForFunction(
     () => document.body.textContent?.includes("响应已保存") ?? false,
+    null,
+    { polling: 100 },
   );
 }
 
@@ -334,7 +349,7 @@ async function writeImageWithTool(panelPage, fixturePath, format, fieldPath) {
   await panelPage.waitForFunction(
     (/** @type {string} */ expectedText) =>
       document.body.textContent?.includes(expectedText) ?? false,
-    `已写入${format === "base64" ? "Base64" : "模拟 Android URI"}`,
+    `已写入草稿（${format === "base64" ? "Base64" : "模拟 Android URI"}）`,
   );
 }
 
@@ -359,6 +374,102 @@ async function triggerBridgeCall(page) {
     );
     return pageWindow.readLastBridgeResponse() ?? {};
   });
+}
+
+/**
+ * 未保存的草稿不得被“触发测试”静默当成已生效：必须提示“草稿未保存”并拦下派发。
+ * @param {import("playwright").Page} panelPage
+ * @param {import("playwright").Page} page
+ */
+async function verifyUnsavedDraftBlocksTrigger(panelPage, page) {
+  await overwriteResponseJson(
+    panelPage,
+    JSON.stringify({ img: `data:image/png;base64,${PNG_DATA_URL_PAYLOAD}`, result: true }, null, 2),
+  );
+  await panelPage.waitForFunction(
+    () => document.body.textContent?.includes("草稿未保存") ?? false,
+    null,
+    { polling: 100 },
+  );
+  await page.evaluate(() => {
+    window.__bridgeEvents = [];
+  });
+
+  await panelPage.getByText("触发测试", { exact: true }).click();
+  await panelPage.waitForFunction(
+    () => document.body.textContent?.includes("草稿尚未保存") ?? false,
+    null,
+    { polling: 100 },
+  );
+
+  const dispatched = await page.evaluate(() => window.__bridgeEvents.length);
+  assert(
+    dispatched === 0,
+    `Unsaved draft must not dispatch stale response, got ${dispatched} event(s).`,
+  );
+}
+
+/**
+ * 窄屏面板（DevTools 面板常见宽度）下，详情页页脚必须留在 .rules-frame 可视区内：
+ * 内容超一屏时页脚会被 overflow: hidden 裁掉，“保存发送”既看不到也点不到。
+ * @param {import("playwright").Page} panelPage
+ */
+async function verifyNarrowFooterReachable(panelPage) {
+  // 复现真实状态：小体积图片 data URL（预览可见，且 Detail JSON 不折叠成摘要）
+  await overwriteResponseJson(
+    panelPage,
+    JSON.stringify({ img: `data:image/png;base64,${PNG_DATA_URL_PAYLOAD}`, result: true }, null, 2),
+  );
+  await saveResponse(panelPage);
+  // 图片字段区必须展开：折叠时内容不足一屏，页脚被裁的问题不会暴露
+  const addFieldButton = panelPage.getByText("添加图片字段", { exact: true });
+  if ((await addFieldButton.count()) > 0) {
+    await addFieldButton.click();
+  }
+  await panelPage.waitForFunction(
+    () => document.body.textContent?.includes("图片格式") ?? false,
+  );
+  await panelPage.setViewportSize({ width: 844, height: 700 });
+  // 等窄屏布局真正生效（详情页成为 .rules-frame 的直接子元素）再测量，否则量到的是宽屏旧布局
+  await panelPage.waitForFunction(
+    () => document.querySelector(".rules-frame > .workspace-pane") !== null,
+    null,
+    { polling: 100 },
+  );
+  const geometry = await panelPage.evaluate(() => {
+    const frame = document.querySelector(".rules-frame")?.getBoundingClientRect();
+    const button = [...document.querySelectorAll(".workspace-pane__footer button")]
+      .find((item) => (item.textContent ?? "").trim() === "保存发送")
+      ?.getBoundingClientRect();
+    if (!frame || !button) {
+      return null;
+    }
+    return {
+      insideFrame: button.top >= frame.top && button.bottom <= frame.bottom + 1,
+      insideViewport: button.bottom <= window.innerHeight,
+      clippedBelowFrame: Math.round(button.bottom - frame.bottom),
+    };
+  });
+
+  assert(geometry, "Narrow panel: 保存发送 footer is missing from the response editor.");
+  assert(
+    geometry.insideFrame && geometry.insideViewport,
+    `Narrow panel: 保存发送 is clipped out of the pane footer (${JSON.stringify(geometry)}).`,
+  );
+
+  // 可见还不够：窄屏下“保存发送”必须真的能点并生效（toast 2.2s 后自动消失，先等它退干净）
+  await panelPage.waitForFunction(
+    () => !document.body.textContent?.includes("响应已保存"),
+    null,
+    { timeout: 15000 },
+  );
+  await panelPage.getByText("保存发送", { exact: true }).click();
+  await panelPage.waitForFunction(
+    () => document.body.textContent?.includes("响应已保存") ?? false,
+    null,
+    { polling: 100 },
+  );
+  await panelPage.setViewportSize({ width: 1280, height: 720 });
 }
 
 /**

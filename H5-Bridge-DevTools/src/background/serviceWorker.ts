@@ -35,8 +35,7 @@ async function dispatchPanelCommand(
   message: PanelCommandRequest,
 ): Promise<PanelCommandResponse> {
   try {
-    await sendCommandToTab(message.tabId, message.command);
-    return { ok: true };
+    return await sendCommandToTab(message.tabId, message.command);
   } catch (error) {
     return {
       ok: false,
@@ -45,22 +44,51 @@ async function dispatchPanelCommand(
   }
 }
 
-async function sendCommandToTab(tabId: number, command: PanelCommand): Promise<void> {
+async function sendCommandToTab(
+  tabId: number,
+  command: PanelCommand,
+): Promise<PanelCommandResponse> {
   const payload: BackgroundToContentMessage = {
     type: "BACKGROUND_COMMAND",
     command,
   };
 
   try {
-    await chrome.tabs.sendMessage(tabId, payload);
+    return await requestContentCommand(tabId, payload);
   } catch (error) {
     if (!isMissingReceiverError(error)) {
       throw error;
     }
 
     await injectContentScripts(tabId);
-    await chrome.tabs.sendMessage(tabId, payload);
+    return await requestContentCommand(tabId, payload);
   }
+}
+
+/**
+ * Rule：内容脚本的回执必须原样回传（含 {ok:false}）；把一切当成成功会让面板把写入失败提示成“响应已保存”。
+ */
+async function requestContentCommand(
+  tabId: number,
+  payload: BackgroundToContentMessage,
+): Promise<PanelCommandResponse> {
+  const response: unknown = await chrome.tabs.sendMessage(tabId, payload);
+  return isPanelCommandResponse(response)
+    ? response
+    : { ok: false, message: "内容脚本未返回命令结果" };
+}
+
+function isPanelCommandResponse(response: unknown): response is PanelCommandResponse {
+  if (typeof response !== "object" || response === null) {
+    return false;
+  }
+  if (Reflect.get(response, "ok") === true) {
+    return true;
+  }
+  return (
+    Reflect.get(response, "ok") === false &&
+    typeof Reflect.get(response, "message") === "string"
+  );
 }
 
 async function injectContentScripts(tabId: number): Promise<void> {

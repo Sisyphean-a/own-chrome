@@ -11,11 +11,14 @@ import {
   deleteResponse,
   saveResponse,
   selectResponse,
+  triggerSelectedResponse,
 } from "./responseActions";
 import { createSenderFromLogEntry, deleteSender, selectSender } from "./senderActions";
 import type { AppViewState } from "./types";
+import type { PanelCommandResponse } from "../shared/messageTypes";
 import { createResponseDraft, createSenderDraft } from "./utils";
 import { createResponse, createSender, createSnapshot } from "../test/factories";
+import { formatJson } from "../shared/json";
 import type { BridgeLogItem } from "../shared/bridgeTypes";
 import { STANDALONE_SENDER_ID } from "../shared/standaloneSender";
 
@@ -47,9 +50,11 @@ function createState(
 function createHarness(initialState: AppViewState) {
   let state = initialState;
   const messages: unknown[] = [];
+  let commandResult: PanelCommandResponse = { ok: true };
   const context = {
     dispatchRuntimeMessage(message: unknown) {
       messages.push(message);
+      return Promise.resolve(commandResult);
     },
     setState(updater) {
       state = typeof updater === "function" ? updater(state) : updater;
@@ -66,6 +71,9 @@ function createHarness(initialState: AppViewState) {
       return state;
     },
     messages,
+    failCommands(message: string) {
+      commandResult = { ok: false, message };
+    },
   };
 }
 
@@ -314,6 +322,93 @@ describe("panel action flows", () => {
     expect(harness.messages).toEqual([]);
     expect(harness.getState().toast?.level).toBe("error");
     expect(harness.getState().toast?.message).toContain("Detail JSON 无效");
+  });
+
+  it("saveResponse 写入失败时不得提示“响应已保存”", async () => {
+    const response = createResponse("resp-1");
+    const sender = createSender("sender-1", { responses: [response], activeResponseId: response.id });
+    const harness = createHarness(
+      createState({
+        snapshot: createSnapshot({ senders: [sender] }),
+        selectedResponse: { senderId: sender.id, responseId: response.id },
+        responseDraft: createResponseDraft(sender.id, response),
+      }),
+    );
+    harness.failCommands("存储写入失败");
+
+    await saveResponse(harness.context);
+
+    expect(harness.messages).toHaveLength(1);
+    // 失败提示由 sendPanelCommand 统一发出，actions 层不得宣称成功
+    expect(harness.getState().toast).toBeNull();
+  });
+
+  it("saveResponse 确认成功后提示已保存", async () => {
+    const response = createResponse("resp-1");
+    const sender = createSender("sender-1", { responses: [response], activeResponseId: response.id });
+    const harness = createHarness(
+      createState({
+        snapshot: createSnapshot({ senders: [sender] }),
+        selectedResponse: { senderId: sender.id, responseId: response.id },
+        responseDraft: createResponseDraft(sender.id, response),
+      }),
+    );
+
+    await saveResponse(harness.context);
+
+    expect(harness.getState().toast).toEqual({ level: "success", message: "响应已保存" });
+  });
+
+  it("triggerSelectedResponse 在草稿未保存时拒绝触发并明说原因", async () => {
+    const response = createResponse("resp-1", { detail: { uri: "old" } });
+    const sender = createSender("sender-1", { responses: [response], activeResponseId: response.id });
+    const harness = createHarness(
+      createState({
+        snapshot: createSnapshot({ senders: [sender] }),
+        selectedResponse: { senderId: sender.id, responseId: response.id },
+        responseDraft: {
+          ...createResponseDraft(sender.id, response),
+          detailText: formatJson({ uri: "new-image" }),
+        },
+      }),
+    );
+
+    await triggerSelectedResponse(harness.context);
+
+    expect(harness.messages).toEqual([]);
+    expect(harness.getState().toast?.level).toBe("error");
+    expect(harness.getState().toast?.message).toContain("草稿尚未保存");
+  });
+
+  it("triggerSelectedResponse 在草稿已保存时触发并只在成功后提示", async () => {
+    const response = createResponse("resp-1");
+    const sender = createSender("sender-1", { responses: [response], activeResponseId: response.id });
+    const harness = createHarness(
+      createState({
+        snapshot: createSnapshot({ senders: [sender] }),
+        selectedResponse: { senderId: sender.id, responseId: response.id },
+        responseDraft: createResponseDraft(sender.id, response),
+      }),
+    );
+
+    await triggerSelectedResponse(harness.context);
+
+    expect(harness.messages).toHaveLength(1);
+    expect(harness.getState().toast).toEqual({ level: "success", message: "已触发测试" });
+
+    const failing = createHarness(
+      createState({
+        snapshot: createSnapshot({ senders: [sender] }),
+        selectedResponse: { senderId: sender.id, responseId: response.id },
+        responseDraft: createResponseDraft(sender.id, response),
+      }),
+    );
+    failing.failCommands("当前 tab 无法接收命令");
+
+    await triggerSelectedResponse(failing.context);
+
+    expect(failing.messages).toHaveLength(1);
+    expect(failing.getState().toast).toBeNull();
   });
 
   it("从匹配页进入响应详情时会把来源页压入历史", () => {

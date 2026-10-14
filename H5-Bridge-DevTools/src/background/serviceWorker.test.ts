@@ -8,6 +8,7 @@ import type {
 import type { StateCommand } from "../shared/stateCommands";
 import { STORAGE_KEY } from "../shared/constants";
 import type { BridgeStorageState } from "../shared/bridgeTypes";
+import { createResponse } from "../test/factories";
 
 type RuntimeMessageListener = (
   message: unknown,
@@ -60,6 +61,35 @@ describe("serviceWorker command routing", () => {
     });
     expect(harness.sendMessage).toHaveBeenCalledTimes(2);
     expect(response).toEqual({ ok: true });
+  });
+
+  it("内容脚本回执失败时必须原样透传，不得当成成功", async () => {
+    const harness = await loadServiceWorkerHarness();
+    harness.sendMessage.mockResolvedValueOnce({
+      ok: false,
+      message: "存储写入失败",
+    });
+
+    const response = await harness.dispatch({
+      type: "PANEL_COMMAND",
+      tabId: 7,
+      command: { type: "UPSERT_RESPONSE", senderId: "sender-1", response: createResponse("r-1") },
+    });
+
+    expect(response).toEqual({ ok: false, message: "存储写入失败" });
+  });
+
+  it("内容脚本没有回执时按失败回执", async () => {
+    const harness = await loadServiceWorkerHarness();
+    harness.sendMessage.mockResolvedValueOnce(undefined);
+
+    const response = await harness.dispatch({
+      type: "PANEL_COMMAND",
+      tabId: 7,
+      command: { type: "TRIGGER_RESPONSE", senderId: "sender-1", responseId: "r-1" },
+    });
+
+    expect(response).toEqual({ ok: false, message: "内容脚本未返回命令结果" });
   });
 
   it("注入失败时会把错误透传给面板", async () => {
