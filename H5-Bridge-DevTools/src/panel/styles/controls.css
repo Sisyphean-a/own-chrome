@@ -219,3 +219,90 @@
 .link-button:hover {
   color: var(--panel-blue);
 }
+
+.site-whitelist {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.site-whitelist__description,
+.site-whitelist__empty,
+.site-whitelist__message {
+  margin: 0;
+  color: var(--panel-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.site-whitelist__form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.site-whitelist__input {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 420px;
+}
+
+.site-whitelist .control-button--primary:hover:not(:disabled) {
+  background: #1557b0;
+}
+
+.site-whitelist .control-button--primary:disabled:hover {
+  background: var(--panel-blue);
+}
+
+.site-whitelist__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-whitelist__item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel-surface);
+}
+
+.site-whitelist__pattern {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--panel-text);
+}
+
+.site-whitelist__badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.site-whitelist__badge.is-enabled {
+  background: var(--panel-green-bg);
+  color: var(--panel-green);
+}
+
+.site-whitelist__badge.is-error {
+  background: var(--panel-red-bg);
+  color: var(--panel-red);
+}
+
+.site-whitelist__message {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--panel-bg);
+  overflow-wrap: anywhere;
+}

@@ -13,6 +13,7 @@
     "https://192.168.0.197/*",
     "https://peru-test.kinquitto.com/*"
   ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "devtools_page": "devtools.html",
   "background": {
     "service_worker": "background/serviceWorker.js",

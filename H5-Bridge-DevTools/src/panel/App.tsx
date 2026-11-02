@@ -95,6 +95,7 @@ export function App({ tabId }: AppProps) {
         {state.activeTab === "settings" ? (
           <div className="rules-frame">
             <SettingsPanel
+              tabId={tabId}
               activeProfileId={state.snapshot?.activeProfileId ?? null}
               profiles={state.snapshot?.profiles ?? []}
               settings={state.snapshot?.settings ?? null}

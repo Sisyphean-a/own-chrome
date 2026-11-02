@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { BridgePanelSnapshot, BridgeStorageState } from "../shared/bridgeTypes";
-import { STORAGE_KEY } from "../shared/constants";
+import { GLOBAL_LIBRARY_KEY, STORAGE_KEY } from "../shared/constants";
 import type {
   PanelCommandRequest,
   PanelCommandResponse,
@@ -135,7 +135,7 @@ async function ensureTabReady(
     if (!location) {
       return true;
     }
-    if (!isSupportedPage(location.href)) {
+    if (!await isSupportedPage(location.href)) {
       // 当前页面不在扩展的 host 权限内：静默降级，只展示存储里的状态。
       return true;
     }
@@ -156,12 +156,20 @@ async function ensureTabReady(
   }
 }
 
-function isSupportedPage(href: string): boolean {
+async function isSupportedPage(href: string): Promise<boolean> {
   const manifest = chrome.runtime.getManifest();
   const patterns = (manifest.content_scripts ?? []).flatMap(
     (script) => script.matches ?? [],
   );
-  return matchesContentScriptPattern(href, patterns);
+  if (matchesContentScriptPattern(href, patterns)) return true;
+  const scripts = await chrome.scripting.getRegisteredContentScripts();
+  const dynamicPatterns = scripts
+    .filter((script) => script.id.startsWith("h5-site-main-"))
+    .flatMap((script) => script.matches ?? []);
+  for (const pattern of dynamicPatterns) {
+    if (matchesContentScriptPattern(href, [pattern]) && await chrome.permissions.contains({ origins: [pattern] })) return true;
+  }
+  return false;
 }
 
 /**
@@ -231,7 +239,7 @@ async function getTabLocation(
 
 function didRelevantSliceChange(
   change: chrome.storage.StorageChange,
-  origin: string,
+  _origin: string,
 ): boolean {
   const before = change.oldValue as BridgeStorageState | undefined;
   const after = change.newValue as BridgeStorageState | undefined;
@@ -239,8 +247,8 @@ function didRelevantSliceChange(
     return true;
   }
 
-  const beforeSlice = before?.origins?.[origin];
-  const afterSlice = after?.origins?.[origin];
+  const beforeSlice = before?.origins?.[GLOBAL_LIBRARY_KEY];
+  const afterSlice = after?.origins?.[GLOBAL_LIBRARY_KEY];
   return JSON.stringify(beforeSlice) !== JSON.stringify(afterSlice);
 }
 

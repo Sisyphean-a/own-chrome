@@ -35,6 +35,7 @@ export type PanelCommandResponse =
 export interface ApplyStateCommandRequest {
   type: "APPLY_STATE_COMMAND";
   origin: string;
+  profileId: string;
   command: StateCommand;
 }
 

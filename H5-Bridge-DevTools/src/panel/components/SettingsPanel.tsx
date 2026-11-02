@@ -2,8 +2,10 @@ import type { CSSProperties, ReactNode } from "react";
 import type { BridgeProfile, BridgeProfileId } from "../../shared/bridgeProfiles";
 import type { OriginBridgeSettings } from "../../shared/ruleTypes";
 import { panelTheme } from "../designSystem";
+import { SiteWhitelist } from "./SiteWhitelist";
 
 interface SettingsPanelProps {
+  tabId: number;
   activeProfileId: BridgeProfileId | null;
   profiles: BridgeProfile[];
   settings: OriginBridgeSettings | null;
@@ -12,6 +14,7 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({
+  tabId,
   activeProfileId,
   profiles,
   settings,
@@ -122,15 +125,17 @@ export function SettingsPanel({
         <SectionTitle>存储与其他</SectionTitle>
         <SettingRow
           label="规则作用域"
-          description="当前项目按 origin + 方案独立保存规则与设置，不提供跨域共享开关。"
-          control={<InfoTag>按域名隔离</InfoTag>}
+          description="所有允许的站点共享桥接方案、规则、设置和日志；切换方案会影响其他已打开的页面。"
+          control={<InfoTag>全局共享</InfoTag>}
         />
         <SettingRow
           label="当前页面"
-          description="此面板的规则和日志均绑定到当前 DevTools 检查目标，并随当前方案实时生效。"
+          description="此面板操作当前 DevTools 检查目标，全局方案变更会同步到其他已打开的页面。"
           control={<InfoTag>实时生效</InfoTag>}
           last
         />
+        <SectionTitle>站点白名单</SectionTitle>
+        <SiteWhitelist tabId={tabId} />
       </div>
     </section>
   );

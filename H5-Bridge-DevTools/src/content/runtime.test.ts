@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSnapshot } from "../test/factories";
 import { applyCommandToRuntimeState, type StateCommand } from "../shared/stateCommands";
-import { STORAGE_KEY } from "../shared/constants";
-import { createDefaultOriginState } from "../shared/storage";
+import { GLOBAL_LIBRARY_KEY, STORAGE_KEY } from "../shared/constants";
+import { createDefaultOriginState, withGlobalLibrary } from "../shared/storage";
 import type { BridgeStorageState } from "../shared/bridgeTypes";
 import {
   applyCommand,
@@ -97,8 +97,7 @@ describe("initializeRuntime", () => {
 
     await expect(initializeRuntime(runtime)).resolves.toBeUndefined();
 
-    const stored = storageBucket[STORAGE_KEY] as BridgeStorageState;
-    expect(stored.origins[origin]).toBeDefined();
+    expect(getSnapshot(runtime).activeProfileId).toBe("pkg01");
   });
 });
 
@@ -110,7 +109,7 @@ describe("applyCommand", () => {
     await applyCommand(runtime, createSendLog("openCamera"));
 
     const stored = storageBucket[STORAGE_KEY] as BridgeStorageState;
-    const storedLogs = stored.origins[origin].profiles.pkg01.logs;
+    const storedLogs = stored.origins[GLOBAL_LIBRARY_KEY].profiles.pkg01.logs;
     expect(storedLogs[0]?.event).toBe("openCamera");
     expect(getActiveProfileState(runtime.state!).logs[0]?.event).toBe("openCamera");
   });
@@ -126,7 +125,7 @@ describe("applyCommand", () => {
     await applyCommand(runtime, createSendLog("second"));
 
     const stored = storageBucket[STORAGE_KEY] as BridgeStorageState;
-    expect(stored.origins[origin].profiles.pkg01.logs.map((log) => log.event)).toEqual([
+    expect(stored.origins[GLOBAL_LIBRARY_KEY].profiles.pkg01.logs.map((log) => log.event)).toEqual([
       "second",
     ]);
     // 镜像保留失败的命令直到下一次存储重载；不再出现未处理 rejection。
@@ -138,7 +137,7 @@ describe("applyCommand", () => {
 });
 
 describe("shared storage sync", () => {
-  it("同 origin 的第二个 runtime 会在存储变化后自动刷新快照", async () => {
+  it("不同 origin 的 runtime 会在全局方案变化后自动刷新快照", async () => {
     const runtimeA = createRuntime();
     const runtimeB = createRuntime();
     const syncListener = (
@@ -148,7 +147,7 @@ describe("shared storage sync", () => {
 
     setWindowLocation(`${origin}/page-a`);
     await initializeRuntime(runtimeA);
-    setWindowLocation(`${origin}/page-b`);
+    setWindowLocation("https://other.example.com/page-b");
     await initializeRuntime(runtimeB);
     chrome.storage.onChanged.addListener(syncListener as never);
 
@@ -156,7 +155,8 @@ describe("shared storage sync", () => {
 
     const syncedSnapshot = getSnapshot(runtimeB);
 
-    expect(syncedSnapshot.href).toBe(`${origin}/page-b`);
+    expect(syncedSnapshot.href).toBe("https://other.example.com/page-b");
+    expect(syncedSnapshot.origin).toBe("https://other.example.com");
     expect(syncedSnapshot.logs[0]?.event).toBe("openCamera");
   });
 
@@ -229,6 +229,11 @@ function installChromeMocks(): void {
   // 与真实 chrome.storage 一致，get 返回副本，应用不泄漏回存储桶。
   sendMessageMock = vi.fn(async (message: unknown) => {
     const request = message as { type: string; origin: string; command: StateCommand };
+    if (request.type === "ENSURE_GLOBAL_LIBRARY") {
+      const state = (storageBucket[STORAGE_KEY] ?? { globalEnabled: true, origins: {} }) as BridgeStorageState;
+      if (!state.origins[GLOBAL_LIBRARY_KEY]) await local.set({ [STORAGE_KEY]: withGlobalLibrary(state) });
+      return { ok: true };
+    }
     if (request.type !== "APPLY_STATE_COMMAND") {
       return { ok: false, message: "unexpected message" };
     }
@@ -236,14 +241,14 @@ function installChromeMocks(): void {
       (storageBucket[STORAGE_KEY] ??
         { globalEnabled: true, origins: {} }) as BridgeStorageState,
     );
-    const originState = cloneValue(state.origins[request.origin] ?? createDefaultOriginState());
+    const originState = cloneValue(state.origins[GLOBAL_LIBRARY_KEY] ?? createDefaultOriginState());
     const working = { globalEnabled: state.globalEnabled, originState };
     applyCommandToRuntimeState(working, request.command);
     await local.set({
       [STORAGE_KEY]: {
         ...state,
         globalEnabled: working.globalEnabled,
-        origins: { ...state.origins, [request.origin]: working.originState },
+        origins: { ...state.origins, [GLOBAL_LIBRARY_KEY]: working.originState },
       },
     });
     return { ok: true };
@@ -265,7 +270,7 @@ function setWindowLocation(href: string): void {
     configurable: true,
     value: {
       location: {
-        origin,
+        origin: new URL(href).origin,
         href,
       },
       postMessage: vi.fn(),

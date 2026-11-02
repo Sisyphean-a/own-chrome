@@ -6,7 +6,8 @@ import type {
   PanelCommandResponse,
 } from "../shared/messageTypes";
 import type { StateCommand } from "../shared/stateCommands";
-import { STORAGE_KEY } from "../shared/constants";
+import { GLOBAL_LIBRARY_KEY, MIGRATION_SOURCE_ORIGIN, STORAGE_KEY } from "../shared/constants";
+import { createDefaultOriginState } from "../shared/storage";
 import type { BridgeStorageState } from "../shared/bridgeTypes";
 import { createResponse } from "../test/factories";
 
@@ -122,9 +123,53 @@ describe("serviceWorker command routing", () => {
 
     expect(response).toEqual({ ok: true });
     const stored = harness.storageBucket[STORAGE_KEY] as BridgeStorageState;
-    expect(stored.origins["https://example.com"].profiles.pkg01.logs[0]?.event).toBe(
+    expect(stored.origins[GLOBAL_LIBRARY_KEY].profiles.pkg01.logs[0]?.event).toBe(
       "openCamera",
     );
+  });
+
+  it("并发初始化只创建一次全局方案库", async () => {
+    const harness = await loadServiceWorkerHarness();
+    const results = await Promise.all([harness.ensureLibrary(), harness.ensureLibrary()]);
+    expect(results).toEqual([{ ok: true }, { ok: true }]);
+    expect(harness.storageSet).toHaveBeenCalledTimes(1);
+    expect((harness.storageBucket[STORAGE_KEY] as BridgeStorageState).origins[GLOBAL_LIBRARY_KEY]).toBeDefined();
+  });
+
+  it("缺少迁移来源时返回错误且不写入旧数据", async () => {
+    const harness = await loadServiceWorkerHarness();
+    const old = { globalEnabled: true, origins: { "https://other.example.com": createDefaultOriginState() } };
+    harness.storageBucket[STORAGE_KEY] = old;
+    const result = await harness.ensureLibrary();
+    expect(result).toEqual({ ok: false, message: expect.stringContaining("未找到迁移来源") });
+    expect(harness.storageSet).not.toHaveBeenCalled();
+    expect(harness.storageBucket[STORAGE_KEY]).toEqual(old);
+  });
+
+  it("迁移本地方案后串行合并不同站点的命令，保留原始数据", async () => {
+    const harness = await loadServiceWorkerHarness();
+    const source = createDefaultOriginState();
+    source.profiles.pkg01.settings.preserveLogs = true;
+    const other = createDefaultOriginState();
+    harness.storageBucket[STORAGE_KEY] = { globalEnabled: true, origins: { [MIGRATION_SOURCE_ORIGIN]: source, "https://other.example.com": other } };
+    await Promise.all([
+      harness.dispatchStateCommand({ type: "APPLY_STATE_COMMAND", origin: MIGRATION_SOURCE_ORIGIN, command: appendLogCommand("local", "first") }),
+      harness.dispatchStateCommand({ type: "APPLY_STATE_COMMAND", origin: "https://other.example.com", command: appendLogCommand("test", "second") }),
+    ]);
+    const stored = harness.storageBucket[STORAGE_KEY] as BridgeStorageState;
+    expect(stored.origins[GLOBAL_LIBRARY_KEY].profiles.pkg01.logs.map((log) => log.id)).toEqual(["test", "local"]);
+    expect(stored.origins[MIGRATION_SOURCE_ORIGIN]).toEqual(source);
+    expect(stored.origins["https://other.example.com"]).toEqual(other);
+  });
+
+  it("其他页面切换方案后拒绝旧方案的写入，避免写到错误方案", async () => {
+    const harness = await loadServiceWorkerHarness();
+    const switched = await harness.dispatchStateCommand({ type: "APPLY_STATE_COMMAND", origin: "https://a.example", command: { type: "SET_ACTIVE_PROFILE", profileId: "pkg03" } });
+    expect(switched).toEqual({ ok: true });
+    const stale = await harness.dispatchStateCommand({ type: "APPLY_STATE_COMMAND", origin: "https://b.example", profileId: "pkg01", command: appendLogCommand("stale", "event") });
+    expect(stale).toEqual({ ok: false, message: expect.stringContaining("其他页面切换") });
+    const stored = harness.storageBucket[STORAGE_KEY] as BridgeStorageState;
+    expect(stored.origins[GLOBAL_LIBRARY_KEY].profiles.pkg03.logs).toEqual([]);
   });
 
   it("状态命令按到达顺序串行应用，不会互相覆盖", async () => {
@@ -144,7 +189,7 @@ describe("serviceWorker command routing", () => {
     ]);
 
     const stored = harness.storageBucket[STORAGE_KEY] as BridgeStorageState;
-    expect(stored.origins["https://example.com"].profiles.pkg01.logs.map((log) => log.id)).toEqual([
+    expect(stored.origins[GLOBAL_LIBRARY_KEY].profiles.pkg01.logs.map((log) => log.id)).toEqual([
       "log-2",
       "log-1",
     ]);
@@ -170,7 +215,7 @@ describe("serviceWorker command routing", () => {
 
     expect(recovered).toEqual({ ok: true });
     const stored = harness.storageBucket[STORAGE_KEY] as BridgeStorageState;
-    expect(stored.origins["https://example.com"].profiles.pkg01.logs.map((log) => log.id)).toEqual([
+    expect(stored.origins[GLOBAL_LIBRARY_KEY].profiles.pkg01.logs.map((log) => log.id)).toEqual([
       "log-2",
     ]);
   });
@@ -185,7 +230,8 @@ function appendLogCommand(id: string, event: string): StateCommand {
 
 async function loadServiceWorkerHarness(): Promise<{
   dispatch: (message: PanelCommandRequest) => Promise<PanelCommandResponse>;
-  dispatchStateCommand: (message: ApplyStateCommandRequest) => Promise<PanelCommandResponse>;
+  dispatchStateCommand: (message: Omit<ApplyStateCommandRequest, "profileId"> & { profileId?: string }) => Promise<PanelCommandResponse>;
+  ensureLibrary: () => Promise<PanelCommandResponse>;
   executeScript: ReturnType<typeof vi.fn>;
   sendMessage: ReturnType<typeof vi.fn>;
   storageSet: ReturnType<typeof vi.fn>;
@@ -244,7 +290,10 @@ async function loadServiceWorkerHarness(): Promise<{
       return dispatchRaw(message);
     },
     dispatchStateCommand(message) {
-      return dispatchRaw(message);
+      return dispatchRaw({ profileId: "pkg01", ...message });
+    },
+    ensureLibrary() {
+      return dispatchRaw({ type: "ENSURE_GLOBAL_LIBRARY" });
     },
     executeScript,
     sendMessage,

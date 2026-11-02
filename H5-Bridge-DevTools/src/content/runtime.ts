@@ -5,7 +5,7 @@ import type {
   OriginBridgeProfileState,
   OriginScopedBridgeState,
 } from "../shared/bridgeTypes";
-import { SOURCE_EXTENSION, STORAGE_KEY } from "../shared/constants";
+import { GLOBAL_LIBRARY_KEY, SOURCE_EXTENSION, STORAGE_KEY } from "../shared/constants";
 import type { PageDispatchMessage, PageSettingsMessage, PanelCommandResponse, ApplyStateCommandRequest } from "../shared/messageTypes";
 import { cloneJson } from "../shared/json";
 import { createId } from "../shared/id";
@@ -16,7 +16,6 @@ import {
 import {
   createDefaultOriginState,
   getOriginProfile,
-  persistOriginScopedState,
   readOriginScopedState,
 } from "../shared/storage";
 
@@ -48,12 +47,8 @@ export async function initializeRuntime(runtime: ContentRuntime): Promise<void> 
   const preserveLogs = profileState.settings.preserveLogs;
   const hasLogs = profileState.logs.length > 0;
 
-  if (!preserveLogs) {
-    profileState.logs = [];
-  }
-
   if (!preserveLogs && hasLogs) {
-    await persistOriginScopedState(origin, runtime.state.globalEnabled, originState);
+    await applyCommand(runtime, { type: "CLEAR_LOGS" });
   }
 
   syncSettingsToPage(runtime);
@@ -89,8 +84,9 @@ export async function applyCommand(
     if (!runtime.state) {
       return;
     }
+    const profileId = runtime.state.originState.activeProfileId;
     applyCommandToRuntimeState(runtime.state, command);
-    await persistCommand(runtime, command);
+    await persistCommand(runtime, command, profileId);
   });
   runtime.chain = work.catch((error: unknown) => {
     console.warn("[H5Bridge] 状态持久化失败，将在后续写入时重试。", error);
@@ -216,10 +212,12 @@ export function createLogEntry(
 async function persistCommand(
   runtime: ContentRuntime,
   command: StateCommand,
+  profileId: string,
 ): Promise<void> {
   const message: ApplyStateCommandRequest = {
     type: "APPLY_STATE_COMMAND",
     origin: runtime.state?.origin ?? "",
+    profileId,
     command,
   };
   const response = (await chrome.runtime.sendMessage(message)) as
@@ -232,7 +230,7 @@ async function persistCommand(
 
 function didRelevantSliceChange(
   change: chrome.storage.StorageChange,
-  origin: string,
+  _origin: string,
 ): boolean {
   const before = (change.oldValue as BridgeStorageState | undefined);
   const after = (change.newValue as BridgeStorageState | undefined);
@@ -240,8 +238,8 @@ function didRelevantSliceChange(
     return true;
   }
 
-  const beforeSlice = before?.origins?.[origin];
-  const afterSlice = after?.origins?.[origin];
+  const beforeSlice = before?.origins?.[GLOBAL_LIBRARY_KEY];
+  const afterSlice = after?.origins?.[GLOBAL_LIBRARY_KEY];
   return JSON.stringify(beforeSlice) !== JSON.stringify(afterSlice);
 }
 

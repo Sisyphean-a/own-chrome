@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Dispatch, SetStateAction } from "react";
-import { STORAGE_KEY } from "../shared/constants";
+import { GLOBAL_LIBRARY_KEY, STORAGE_KEY } from "../shared/constants";
 import { createDefaultOriginState } from "../shared/storage";
 import { createSender } from "../test/factories";
 import { loadSnapshotForTab, sendPanelCommand } from "./runtimeBridge";
@@ -16,7 +16,7 @@ beforeEach(() => {
     [STORAGE_KEY]: {
       globalEnabled: true,
       origins: {
-        [origin]: originState,
+        [GLOBAL_LIBRARY_KEY]: originState,
       },
     },
   };
@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 describe("loadSnapshotForTab", () => {
-  it("会按当前 tab URL 读取对应 origin 的快照", async () => {
+  it("读取全局方案库并保留当前 tab URL", async () => {
     const snapshot = await loadSnapshotForTab(7);
 
     expect(snapshot?.origin).toBe(origin);

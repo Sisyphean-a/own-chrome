@@ -3,7 +3,9 @@ import {
   createDefaultOriginState,
   getOriginProfile,
   importRulePackageIntoOriginState,
+  withGlobalLibrary,
 } from "./storage";
+import { GLOBAL_LIBRARY_KEY, MIGRATION_SOURCE_ORIGIN } from "./constants";
 import type { RulePackage } from "./rulePackage";
 
 const rulePackage: RulePackage = {
@@ -36,6 +38,28 @@ const rulePackage: RulePackage = {
     },
   ],
 };
+
+describe("全局方案库迁移", () => {
+  it("使用指定本地站点初始化，保留所有旧站点数据并隔离副本", () => {
+    const local = importRulePackageIntoOriginState(createDefaultOriginState(), rulePackage, "replace");
+    const other = createDefaultOriginState();
+    const old = { globalEnabled: true, origins: { [MIGRATION_SOURCE_ORIGIN]: local, "https://example.com": other } };
+    const migrated = withGlobalLibrary(old);
+    expect(migrated.origins[GLOBAL_LIBRARY_KEY].profiles["customer-demo"].senders).toEqual(local.profiles["customer-demo"].senders);
+    expect(migrated.origins[MIGRATION_SOURCE_ORIGIN]).toBe(local);
+    expect(migrated.origins["https://example.com"]).toBe(other);
+    migrated.origins[GLOBAL_LIBRARY_KEY].profiles["customer-demo"].senders[0].name = "修改";
+    expect(local.profiles["customer-demo"].senders[0].name).toBe("登录");
+    expect(withGlobalLibrary(migrated)).toBe(migrated);
+  });
+
+  it("旧数据存在但找不到来源时拒绝迁移；全新安装使用默认方案", () => {
+    const existing = { globalEnabled: true, origins: { "https://example.com": createDefaultOriginState() } };
+    expect(() => withGlobalLibrary(existing)).toThrow("未找到迁移来源");
+    expect(existing.origins).not.toHaveProperty(GLOBAL_LIBRARY_KEY);
+    expect(withGlobalLibrary({ globalEnabled: true, origins: {} }).origins[GLOBAL_LIBRARY_KEY]).toBeDefined();
+  });
+});
 
 describe("规则包存储", () => {
   it("导入新规则包会注册动态方案、切换当前方案并应用设置", () => {

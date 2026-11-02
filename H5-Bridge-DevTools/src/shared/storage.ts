@@ -24,7 +24,7 @@ import {
 import type { RulePackage } from "./rulePackage";
 import type { ImportStrategy, OriginBridgeSettings } from "./ruleTypes";
 import type { BridgeSender } from "./senderTypes";
-import { LEGACY_STORAGE_KEY, STORAGE_KEY } from "./constants";
+import { GLOBAL_LIBRARY_KEY, LEGACY_STORAGE_KEY, MIGRATION_SOURCE_ORIGIN, STORAGE_KEY } from "./constants";
 
 export const DEFAULT_SETTINGS: OriginBridgeSettings = {
   autoMock: true,
@@ -74,15 +74,11 @@ export async function readStorageStateRaw(): Promise<BridgeStorageState | undefi
 }
 
 /**
- * 写路径使用的当前态读取：有 v2 键直接返回原始值（不再全量归一化），
- * 否则先执行 v1 迁移。迁移只在 v2 键缺失时发生一次。
+ * 写路径保留旧站点切片原样；首次创建全局库时仅归一化指定来源的副本。
  */
 export async function readStorageStateForWrite(): Promise<BridgeStorageState> {
   const raw = await readStorageStateRaw();
-  if (raw) {
-    return raw;
-  }
-  return (await migrateLegacyState()) ?? { globalEnabled: true, origins: {} };
+  return withGlobalLibrary(raw ?? await migrateLegacyState() ?? { globalEnabled: true, origins: {} });
 }
 
 async function migrateLegacyState(): Promise<BridgeStorageState | undefined> {
@@ -106,27 +102,26 @@ export async function writeStorageState(state: BridgeStorageState): Promise<void
   await chrome.storage.local.set({ [STORAGE_KEY]: state });
 }
 
-export async function ensureOriginState(origin: string): Promise<BridgeStorageState> {
-  const raw = await readStorageStateRaw();
-  const rawOriginState = raw?.origins?.[origin];
-  if (raw && isScopedOriginState(rawOriginState)) {
-    return raw;
+export function withGlobalLibrary(state: BridgeStorageState): BridgeStorageState {
+  if (state.origins[GLOBAL_LIBRARY_KEY]) return state;
+  const source = state.origins[MIGRATION_SOURCE_ORIGIN];
+  if (!source && Object.keys(state.origins).length > 0) {
+    throw new Error(`未找到迁移来源 ${MIGRATION_SOURCE_ORIGIN}，原有站点数据未修改`);
   }
-
-  const state = raw ? normalizeStorageState(raw) : await readStorageState();
-  if (state.origins[origin]) {
-    return state;
-  }
-
-  const nextState = {
+  return {
     ...state,
-    origins: {
-      ...state.origins,
-      [origin]: createDefaultOriginState(),
-    },
+    origins: { ...state.origins, [GLOBAL_LIBRARY_KEY]: normalizeOriginState(source) },
   };
-  await writeStorageState(nextState);
-  return nextState;
+}
+
+export async function ensureOriginState(_origin: string): Promise<BridgeStorageState> {
+  const raw = await readStorageStateRaw();
+  if (raw?.origins?.[GLOBAL_LIBRARY_KEY]) return normalizeStorageState(raw);
+  const response = await chrome.runtime.sendMessage({ type: "ENSURE_GLOBAL_LIBRARY" }) as { ok: boolean; message?: string } | undefined;
+  if (!response?.ok) throw new Error(response?.message ?? "全局方案库初始化失败");
+  const initialized = await readStorageStateRaw();
+  if (!initialized?.origins?.[GLOBAL_LIBRARY_KEY]) throw new Error("全局方案库未写入存储");
+  return normalizeStorageState(initialized);
 }
 
 export async function buildSnapshot(origin: string, href: string): Promise<BridgePanelSnapshot> {
@@ -152,28 +147,8 @@ export async function readOriginScopedState(
   const state = await ensureOriginState(origin);
   return {
     globalEnabled: state.globalEnabled ?? true,
-    originState: cloneJson(state.origins[origin] ?? createDefaultOriginState()),
+    originState: cloneJson(state.origins[GLOBAL_LIBRARY_KEY]),
   };
-}
-
-/**
- * 写路径专用：把整个 origin 切片写回存储。仅用于内容脚本初始化等
- * 低频全量写入；运行期增量写入走后台的 APPLY_STATE_COMMAND。
- */
-export async function persistOriginScopedState(
-  origin: string,
-  globalEnabled: boolean,
-  originState: OriginScopedBridgeState,
-): Promise<void> {
-  const current = await readStorageStateForWrite();
-  await writeStorageState({
-    ...current,
-    globalEnabled,
-    origins: {
-      ...current.origins,
-      [origin]: cloneJson(originState),
-    },
-  });
 }
 
 export async function updateStorageState(

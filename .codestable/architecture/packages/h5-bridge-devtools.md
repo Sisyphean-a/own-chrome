@@ -10,10 +10,10 @@ Chrome Manifest V3 DevTools 扩展，在受支持页面中模拟可配置的 And
 
 ## 代码边界
 
-- `H5-Bridge-DevTools/public/manifest.json`：扩展声明、权限、站点清单和扩展入口；`scripts/build.mjs` 把它的 `host_permissions` 作为唯一站点来源注入两处 `content_scripts.matches`。
+- `H5-Bridge-DevTools/public/manifest.json`：扩展声明、内置站点和可选站点权限；`scripts/build.mjs` 把内置 `host_permissions` 注入两处静态 `content_scripts.matches`。用户可在设置中授权域名及其子域名，`src/panel/siteWhitelist.ts` 持久注册两段动态脚本并管理对应可选权限；静态与动态脚本均在 `document_start` 注入。
 - `H5-Bridge-DevTools/src/devtools/devtools.ts`：DevTools 面板注册；`src/panel/panel.tsx`：React 面板根。
 - `H5-Bridge-DevTools/src/injected/injectMain.ts`：页面主世界注入，绑定当前方案的宿主对象、捕获 `postMessage`、回放响应事件。
-- `H5-Bridge-DevTools/src/content/`：content script 的桥接调用接收、当前 origin 快照和规则命令执行。
+- `H5-Bridge-DevTools/src/content/`：content script 的桥接调用接收、全局方案快照和规则命令执行；页面地址仍标识调用目标。
 - `H5-Bridge-DevTools/src/background/serviceWorker.ts`：一次性面板命令转发、缺少收件端时的重新注入、状态写入串行队列。
 - `H5-Bridge-DevTools/src/shared/`：跨层类型、消息、存储、方案、预置和纯规则逻辑的唯一契约层；`stateCommands.ts` 定义内容脚本与后台之间的确定性状态增量命令协议。
 - 构建入口：`scripts/build.mjs`（background、content、main-world 注入脚本产物）与 `vite.config.ts`（面板类扩展页面产物）。
@@ -31,9 +31,9 @@ Chrome 可随时回收 MV3 service worker，功能不依赖常驻 worker 端口�
 
 ## 状态与写入协议
 
-`chrome.storage.local` 中的 `h5BridgeDevTools:v2` 是共享状态来源（`src/shared/constants.ts`、`storage.ts`）。状态先按 origin，再按活动桥接方案分桶；每个 origin 同时保存方案定义和各方案的发送条目、日志、设置（`src/shared/bridgeTypes.ts`）。content 和 panel 都监听该存储键，只在本 origin 切片或全局开关变化时刷新；panel 的未保存草稿仍保留并提示远端更新（`src/content/runtime.ts`、`src/panel/runtimeBridge.ts`、`src/panel/helpers.ts`）。
+`chrome.storage.local` 中的 `h5BridgeDevTools:v2` 是共享状态来源（`src/shared/constants.ts`、`storage.ts`）。全局方案库位于 `origins.__global_library__`，旧站点切片保留为备份；首次初始化由后台写入队列串行执行，从用户指定的 `http://localhost:5173` 复制旧数据，找不到该来源且存在旧数据时显式失败，空存储使用默认方案。content 和 panel 监听全局方案库或全局开关变化；panel 的未保存草稿仍保留并提示远端更新（`src/content/runtime.ts`、`src/panel/runtimeBridge.ts`、`src/panel/helpers.ts`）。
 
-所有运行期状态变更走 `APPLY_STATE_COMMAND` 确定性增量命令（`src/shared/stateCommands.ts`）：内容脚本把命令同时应用到本地镜像并经 `runtime.sendMessage` 交给后台，后台在串行队列里读最新存储、应用同一命令、写回（`src/background/serviceWorker.ts`）。会生成新 id 的操作（导入、复制）在发送侧物化为 `REPLACE_*` 命令，保证镜像与存储收敛。单次写入失败只影响该命令：内容脚本写链与后台队列都继续工作；页面 payload 在入点经 `sanitizeForStorage` 净化（`src/shared/json.ts`）。低频初始化写入（如按设置清空日志）直接调用 `persistOriginScopedState`。
+所有运行期状态变更走 `APPLY_STATE_COMMAND` 确定性增量命令（`src/shared/stateCommands.ts`）：内容脚本把命令同时应用到本地镜像并经 `runtime.sendMessage` 交给后台，后台在串行队列里读最新存储、应用同一命令、写回（`src/background/serviceWorker.ts`）。初始化和清空日志也经过后台串行队列，避免覆盖并发写入；命令携带发起时的活动方案，若其他页面已切换方案则拒绝依赖旧方案的写入，避免误写到新方案。会生成新 id 的操作（导入、复制）在发送侧物化为 `REPLACE_*` 命令，保证镜像与存储收敛。单次写入失败只影响该命令：内容脚本写链与后台队列都继续工作；页面 payload 在入点经 `sanitizeForStorage` 净化（`src/shared/json.ts`）。
 
 旧 `h5BridgeDevTools:v1` 的单规则数据仅在首次读取时迁移到当前结构，迁移成功后移除旧键（`src/shared/migrate.ts`）。
 
@@ -56,7 +56,7 @@ Chrome 可随时回收 MV3 service worker，功能不依赖常驻 worker 端口�
 
 桥接领域语义（方案隔离、匹配条件、活跃响应、延迟上下限、交付形态、开关语义、名称安全）由 [bridge-simulation 领域上下文](../../requirements/contexts/bridge-simulation.md) 定义；本包只在以下位置实现和加固，不在此重述规则：
 
-- 状态隔离与结构迁移：`src/shared/bridgeTypes.ts`、`storage.ts`、`migrate.ts`；运行期写入路径见上节协议。
+- 全局方案库与结构迁移：`src/shared/bridgeTypes.ts`、`storage.ts`、`migrate.ts`；运行期写入路径见上节协议。
 - 匹配与回包：`src/content/controller.ts`（提取请求、延迟派发、派发前复检）、`src/shared/rules.ts`（响应校验与延迟上限）、`src/panel/responseActions.ts`（编辑校验）、`src/shared/rulePackage.ts`（导入校验）。
 - 方案与名称安全：`src/shared/bridgeProfiles.ts` 的标识符模式和宿主、全局、原型名称黑名单；规则包导入复用同一校验。
 - 面板可见性：规则页的三个视图和计数在 `src/panel/components/RuleWorkspace.tsx`；动态方案没有内置模板时 `src/shared/presets.ts` 返回空列表，面板照常渲染。

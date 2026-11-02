@@ -46,7 +46,7 @@ try {
   const port = await listen(server);
   const origin = `http://127.0.0.1:${port}`;
   const pageAUrl = `${origin}/page-a.html`;
-  const pageBUrl = `${origin}/page-b.html`;
+  const pageBUrl = `http://localhost:${port}/page-b.html`;
   const context = await chromium.launchPersistentContext(userDataDir, {
     ...(headed ? { headless: false } : { channel: "chromium", headless: true }),
     args: [

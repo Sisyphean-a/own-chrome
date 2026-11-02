@@ -1,3 +1,4 @@
+import { GLOBAL_LIBRARY_KEY } from "../shared/constants";
 import type {
   ApplyStateCommandRequest,
   BackgroundToContentMessage,
@@ -12,6 +13,7 @@ import {
 import {
   createDefaultOriginState,
   readStorageStateForWrite,
+  readStorageStateRaw,
   writeStorageState,
 } from "../shared/storage";
 
@@ -21,6 +23,16 @@ const CONTENT_SCRIPT_FILES = ["injected/injectMain.js", "content/contentScript.j
 let stateWriteQueue: Promise<void> = Promise.resolve();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (typeof message === "object" && message !== null && Reflect.get(message, "type") === "ENSURE_GLOBAL_LIBRARY") {
+    stateWriteQueue = stateWriteQueue.then(async () => {
+      const raw = await readStorageStateRaw();
+      if (!raw?.origins?.[GLOBAL_LIBRARY_KEY]) await writeStorageState(await readStorageStateForWrite());
+      sendResponse({ ok: true });
+    }).catch((error: unknown) => {
+      sendResponse({ ok: false, message: toErrorMessage(error) });
+    });
+    return true;
+  }
   if (isPanelCommandRequest(message)) {
     void dispatchPanelCommand(message).then(sendResponse);
     return true;
@@ -113,7 +125,7 @@ function enqueueStateCommand(
   sendResponse: (response: PanelCommandResponse) => void,
 ): boolean {
   stateWriteQueue = stateWriteQueue
-    .then(() => applyStateCommandToStorage(message.origin, message.command))
+    .then(() => applyStateCommandToStorage(message.profileId, message.command))
     .then(() => {
       sendResponse({ ok: true });
     })
@@ -125,11 +137,14 @@ function enqueueStateCommand(
 }
 
 async function applyStateCommandToStorage(
-  origin: string,
+  profileId: string,
   command: StateCommand,
 ): Promise<void> {
   const current = await readStorageStateForWrite();
-  const originState = current.origins[origin] ?? createDefaultOriginState();
+  const originState = current.origins[GLOBAL_LIBRARY_KEY] ?? createDefaultOriginState();
+  if (command.type !== "SET_ACTIVE_PROFILE" && command.type !== "SET_GLOBAL_ENABLED" && originState.activeProfileId !== profileId) {
+    throw new Error("桥接方案已在其他页面切换，请刷新后重试");
+  }
   const working = {
     globalEnabled: current.globalEnabled ?? true,
     originState,
@@ -140,7 +155,7 @@ async function applyStateCommandToStorage(
     globalEnabled: working.globalEnabled,
     origins: {
       ...current.origins,
-      [origin]: working.originState,
+      [GLOBAL_LIBRARY_KEY]: working.originState,
     },
   });
 }
@@ -161,6 +176,8 @@ function isApplyStateCommandRequest(message: unknown): message is ApplyStateComm
     Reflect.get(message, "type") === "APPLY_STATE_COMMAND" &&
     typeof Reflect.get(message, "origin") === "string" &&
     Reflect.get(message, "origin") !== "" &&
+    typeof Reflect.get(message, "profileId") === "string" &&
+    Reflect.get(message, "profileId") !== "" &&
     typeof Reflect.get(message, "command") === "object" &&
     Reflect.get(message, "command") !== null
   );
