@@ -10,6 +10,12 @@ export interface ImageValueInspection {
   sizeBytes: number | null;
 }
 
+export interface ImageFieldSuggestion {
+  path: string;
+  label: string;
+  recommended: boolean;
+}
+
 const imageFieldPattern = /(uri|path|base64|image|img|photo|face|data)/i;
 const preferredFieldNames: Record<ImageValueFormat, string[]> = {
   androidUri: ["uri", "path", "imageUri", "filePath"],
@@ -21,12 +27,52 @@ const fallbackFieldNames = ["uri", "data", "faceImg", "base64", "image"];
 export function buildImageFieldSuggestionsFromText(
   detailText: string,
   format: ImageValueFormat,
-): string[] {
+): ImageFieldSuggestion[] {
   const parsed = safeParseJson(detailText);
-  const discovered = parsed.ok ? collectImageFieldPaths(parsed.value) : [];
-  return Array.from(
-    new Set([...discovered, ...preferredFieldNames[format], ...fallbackFieldNames]),
-  );
+  const entries = parsed.ok ? collectFieldEntries(parsed.value) : [];
+  const recommendedPath =
+    (parsed.ok ? pickBestImageField(parsed.value, format) : undefined) ??
+    preferredFieldNames[format][0];
+  const existingPaths = new Set(entries.map((entry) => entry.path));
+  const ordered = entries
+    .map((entry, index) => ({
+      entry,
+      index,
+      score: scoreImageField(entry.path, entry.value, format),
+    }))
+    .sort((left, right) => {
+      const recommendedDiff =
+        Number(right.entry.path === recommendedPath) -
+        Number(left.entry.path === recommendedPath);
+      if (recommendedDiff !== 0) {
+        return recommendedDiff;
+      }
+      const leftScore = left.score ?? Number.NEGATIVE_INFINITY;
+      const rightScore = right.score ?? Number.NEGATIVE_INFINITY;
+      if (leftScore !== rightScore) {
+        return rightScore - leftScore;
+      }
+      return left.index - right.index;
+    });
+
+  const suggestions: ImageFieldSuggestion[] = ordered.map(({ entry }) => ({
+    path: entry.path,
+    label: describeFieldValue(entry.value),
+    recommended: entry.path === recommendedPath,
+  }));
+
+  if (!existingPaths.has(recommendedPath)) {
+    suggestions.unshift({ path: recommendedPath, label: "新建字段", recommended: true });
+    existingPaths.add(recommendedPath);
+  }
+  for (const path of [...preferredFieldNames[format], ...fallbackFieldNames]) {
+    if (existingPaths.has(path)) {
+      continue;
+    }
+    existingPaths.add(path);
+    suggestions.push({ path, label: "新建字段", recommended: false });
+  }
+  return suggestions;
 }
 
 export function createMockAndroidUri(fileName: string): string {
@@ -47,10 +93,7 @@ export function readImageValueFromDetailText(
     return undefined;
   }
 
-  const segments = fieldPath
-    .split(".")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
+  const segments = parseFieldPath(fieldPath);
   let current: unknown = parsed.value;
   for (const segment of segments) {
     if (!isPlainObject(current)) {
@@ -134,8 +177,7 @@ export function suggestImageFormatFromText(detailText: string): ImageValueFormat
     return "base64";
   }
 
-  const paths = collectImageFieldPaths(parsed.value);
-  const base64Path = findPreferredField(paths, preferredFieldNames.base64);
+  const base64Path = pickBestImageField(parsed.value, "base64");
   if (base64Path) {
     const currentValue = readValueAtPath(parsed.value, base64Path);
     return typeof currentValue === "string" && inspectImageValue(currentValue).kind === "uri"
@@ -143,7 +185,7 @@ export function suggestImageFormatFromText(detailText: string): ImageValueFormat
       : "base64";
   }
 
-  return findPreferredField(paths, preferredFieldNames.androidUri) ? "androidUri" : "base64";
+  return pickBestImageField(parsed.value, "androidUri") ? "androidUri" : "base64";
 }
 
 export function suggestImageFieldPathFromText(
@@ -167,21 +209,35 @@ export function writeImageValueToDetailText(
     return { ok: false, error: `Detail JSON 无效: ${parsed.error}` };
   }
 
-  const next = setImageValueInDetail(parsed.value, fieldPath, imageValue);
-  if (next.ok === false) {
-    return { ok: false, error: next.error };
+  const segments = parseFieldPath(fieldPath);
+  if (segments.length === 0) {
+    return { ok: false, error: "图片字段不能为空" };
+  }
+  if (!isPlainObject(parsed.value)) {
+    return { ok: false, error: "Detail JSON 必须是对象，图片工具才能写入字段" };
   }
 
-  return { ok: true, detailText: formatJson(next.value) };
+  const conflict = findWriteConflict(parsed.value, segments);
+  if (conflict) {
+    return { ok: false, error: conflict };
+  }
+
+  return {
+    ok: true,
+    detailText: formatJson(updateFieldPath(parsed.value, segments, imageValue)),
+  };
 }
 
-function readValueAtPath(detail: unknown, fieldPath: string): unknown {
-  const segments = fieldPath
+function parseFieldPath(fieldPath: string): string[] {
+  return fieldPath
     .split(".")
     .map((segment) => segment.trim())
     .filter(Boolean);
+}
+
+function readValueAtPath(detail: unknown, fieldPath: string): unknown {
   let current = detail;
-  for (const segment of segments) {
+  for (const segment of parseFieldPath(fieldPath)) {
     if (!isPlainObject(current)) {
       return undefined;
     }
@@ -190,20 +246,28 @@ function readValueAtPath(detail: unknown, fieldPath: string): unknown {
   return current;
 }
 
-function collectImageFieldPaths(detail: unknown, prefix = ""): string[] {
+interface FieldEntry {
+  path: string;
+  value: unknown;
+}
+
+/**
+ * 收集对象内全部字段路径；数组只记录自身，字段路径协议不进入数组下标。
+ */
+function collectFieldEntries(detail: unknown, prefix = ""): FieldEntry[] {
   if (!isPlainObject(detail)) {
     return [];
   }
 
-  const paths: string[] = [];
+  const entries: FieldEntry[] = [];
   for (const [key, value] of Object.entries(detail)) {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (imageFieldPattern.test(key)) {
-      paths.push(path);
+    entries.push({ path, value });
+    if (isPlainObject(value)) {
+      entries.push(...collectFieldEntries(value, path));
     }
-    paths.push(...collectImageFieldPaths(value, path));
   }
-  return paths;
+  return entries;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -225,31 +289,129 @@ function readFileAsBase64(file: Blob): Promise<string> {
   });
 }
 
-function setImageValueInDetail(
-  detail: unknown,
-  fieldPath: string,
-  imageValue: string,
-): { ok: true; value: unknown } | { ok: false; error: string } {
-  const segments = fieldPath
-    .split(".")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  if (segments.length === 0) {
-    return { ok: false, error: "图片字段不能为空" };
+/**
+ * 值不是字符串的路径仍会出现在字段建议里，但写入前必须显式拒绝，避免覆盖对象内部字段。
+ */
+function findWriteConflict(detail: unknown, segments: string[]): string | undefined {
+  let current: unknown = detail;
+  for (const [index, segment] of segments.entries()) {
+    if (!isPlainObject(current)) {
+      return `字段「${segments.slice(0, index).join(".")}」不是对象，无法写入「${segments.join(".")}」`;
+    }
+
+    const value = current[segment];
+    if (index < segments.length - 1) {
+      if (value === undefined) {
+        return undefined;
+      }
+      current = value;
+      continue;
+    }
+
+    if (isPlainObject(value)) {
+      return `字段「${segments.join(".")}」当前是对象，直接写入会覆盖内部字段；请选择具体子字段`;
+    }
+    if (Array.isArray(value)) {
+      return `字段「${segments.join(".")}」当前是数组，直接写入会覆盖内部数据；请选择具体子字段`;
+    }
+    return undefined;
   }
-  if (!isPlainObject(detail)) {
-    return { ok: false, error: "Detail JSON 必须是对象，图片工具才能写入字段" };
-  }
-  return { ok: true, value: updateFieldPath(detail, segments, imageValue) };
+  return undefined;
 }
 
 function suggestImageFieldPath(detail: unknown, format: ImageValueFormat): string {
-  const paths = collectImageFieldPaths(detail);
-  const matched = findPreferredField(paths, preferredFieldNames[format]);
-  if (matched) {
-    return matched;
+  return pickBestImageField(detail, format) ?? preferredFieldNames[format][0];
+}
+
+/**
+ * Rule: 先按字段名匹配当前格式的优先名，再按值是否为图片判断；父级对象不参与候选。
+ */
+function scoreImageField(
+  path: string,
+  value: unknown,
+  format: ImageValueFormat,
+): number | null {
+  if (typeof value !== "string") {
+    return null;
   }
-  return paths[0] ?? preferredFieldNames[format][0];
+
+  const fieldName = path.split(".").pop() ?? path;
+  const preferred = preferredFieldNames[format].includes(fieldName);
+  const named = preferred || imageFieldPattern.test(fieldName);
+  const inspection = inspectImageValue(value);
+  const imageValue =
+    inspection.kind === "base64" ||
+    inspection.kind === "dataUrl" ||
+    inspection.kind === "uri";
+  if (!named && !imageValue) {
+    return null;
+  }
+
+  let score = (preferred ? 100 : 0) + (named ? 30 : 0);
+  if (inspection.kind === "base64" || inspection.kind === "dataUrl") {
+    score += 60;
+  } else if (inspection.kind === "uri") {
+    score += 40;
+  } else if (inspection.kind === "text") {
+    score += 10;
+  }
+  return score - path.split(".").length;
+}
+
+function pickBestImageField(detail: unknown, format: ImageValueFormat): string | undefined {
+  let best: { path: string; score: number } | undefined;
+  for (const entry of collectFieldEntries(detail)) {
+    const score = scoreImageField(entry.path, entry.value, format);
+    if (score === null) {
+      continue;
+    }
+    if (!best || score > best.score) {
+      best = { path: entry.path, score };
+    }
+  }
+  return best?.path;
+}
+
+function describeFieldValue(value: unknown): string {
+  if (typeof value === "string") {
+    if (isRedactedImagePlaceholder(value)) {
+      return "图片原文已隐藏";
+    }
+    const inspection = inspectImageValue(value);
+    switch (inspection.kind) {
+      case "base64":
+        return `Base64 · 约 ${formatImageByteSize(inspection.sizeBytes)}`;
+      case "dataUrl":
+        return `Data URL · 约 ${formatImageByteSize(inspection.sizeBytes)}`;
+      case "uri":
+        return "URI";
+      case "empty":
+        return "空字符串";
+      default:
+        return "文本";
+    }
+  }
+  if (Array.isArray(value)) {
+    return "数组";
+  }
+  if (isPlainObject(value)) {
+    const count = Object.keys(value).length;
+    return count > 0 ? `对象 · ${count} 个字段` : "空对象";
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "number") {
+    return "数字";
+  }
+  if (typeof value === "boolean") {
+    return "布尔";
+  }
+  return "值";
+}
+
+function isRedactedImagePlaceholder(value: string): boolean {
+  return /^\[图片 (?:Base64|Data URL)，约 [^，]+，原文已隐藏\]$/.test(value);
 }
 
 function updateFieldPath(
@@ -271,10 +433,6 @@ function updateFieldPath(
     ...source,
     [head]: updateFieldPath(nested, rest, imageValue),
   };
-}
-
-function findPreferredField(paths: string[], names: string[]): string | undefined {
-  return paths.find((path) => names.some((name) => path === name || path.endsWith(`.${name}`)));
 }
 
 function redactImageDataNode(value: unknown, keyHint?: string): unknown {

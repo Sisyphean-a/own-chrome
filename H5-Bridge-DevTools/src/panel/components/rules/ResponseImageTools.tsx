@@ -38,6 +38,10 @@ export function ResponseImageTools({ controller }: { controller: PanelController
     [draft?.detailText, fieldPath],
   );
   const currentImage = useMemo(() => inspectImageValue(currentImageValue), [currentImageValue]);
+  const selectedSuggestion = suggestions.find((item) => item.path === fieldPath);
+  const fieldHint = selectedSuggestion
+    ? `${selectedSuggestion.recommended ? "推荐字段" : "当前字段"} · ${selectedSuggestion.label}`
+    : "新字段";
   const persistedPreviewUrl = selectedFile ? null : currentImage.previewUrl;
   const previewUrl = selectedPreviewUrl ?? persistedPreviewUrl;
   const [previewError, setPreviewError] = useState(false);
@@ -124,7 +128,7 @@ export function ResponseImageTools({ controller }: { controller: PanelController
       {expanded ? (
         <>
           <div className="form-grid" style={{ marginTop: 12 }}>
-            <Field label="图片字段">
+            <Field label="图片字段" hint={fieldHint}>
               <input
                 list={`image-field-${draft.id}`}
                 className="control-field mono"
@@ -132,8 +136,12 @@ export function ResponseImageTools({ controller }: { controller: PanelController
                 onChange={(event) => setFieldPath(event.target.value)}
               />
               <datalist id={`image-field-${draft.id}`}>
-                {suggestions.map((path) => (
-                  <option key={path} value={path} />
+                {suggestions.map((suggestion) => (
+                  <option
+                    key={suggestion.path}
+                    value={suggestion.path}
+                    label={suggestion.label}
+                  />
                 ))}
               </datalist>
             </Field>
